@@ -21,11 +21,14 @@ struct AuthInterceptor {
 }
 
 impl Interceptor for AuthInterceptor {
-    fn call(&mut self, mut request: tonic::Request<()>) -> Result<tonic::Request<()>, tonic::Status> {
+    fn call(
+        &mut self,
+        mut request: tonic::Request<()>,
+    ) -> Result<tonic::Request<()>, tonic::Status> {
         if let Some(ref token) = self.token {
-            let value = token.parse().map_err(|_| {
-                tonic::Status::internal("Invalid auth token format")
-            })?;
+            let value = token
+                .parse()
+                .map_err(|_| tonic::Status::internal("Invalid auth token format"))?;
             request.metadata_mut().insert("local-auth", value);
         }
         Ok(request)
@@ -60,12 +63,11 @@ impl PositionClient {
             "Connecting to position services"
         );
 
-        let ca_cert = std::fs::read_to_string(MINKNOW_CA_CERT_PATH).map_err(|e| {
-            ClientError::Connection {
+        let ca_cert =
+            std::fs::read_to_string(MINKNOW_CA_CERT_PATH).map_err(|e| ClientError::Connection {
                 endpoint: endpoint.clone(),
                 source: Box::new(e),
-            }
-        })?;
+            })?;
 
         let tls_config = ClientTlsConfig::new()
             .ca_certificate(Certificate::from_pem(&ca_cert))

@@ -187,7 +187,10 @@ impl Client {
         &self.host
     }
 
-    pub async fn connect_position(&self, position: Position) -> Result<PositionClient, ClientError> {
+    pub async fn connect_position(
+        &self,
+        position: Position,
+    ) -> Result<PositionClient, ClientError> {
         PositionClient::connect(position, &self.host, self.auth_token.clone()).await
     }
 
