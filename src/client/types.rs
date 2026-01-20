@@ -204,3 +204,81 @@ impl StatsSnapshot {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_run_state_is_active() {
+        assert!(!RunState::Idle.is_active());
+        assert!(RunState::Starting.is_active());
+        assert!(RunState::Running.is_active());
+        assert!(RunState::Paused.is_active());
+        assert!(RunState::Finishing.is_active());
+        assert!(!RunState::Stopped.is_active());
+        assert!(!RunState::Error("test".into()).is_active());
+    }
+
+    #[test]
+    fn test_run_state_labels() {
+        assert_eq!(RunState::Idle.label(), "Idle");
+        assert_eq!(RunState::Starting.label(), "Starting");
+        assert_eq!(RunState::Running.label(), "Running");
+        assert_eq!(RunState::Paused.label(), "Paused");
+        assert_eq!(RunState::Finishing.label(), "Finishing");
+        assert_eq!(RunState::Stopped.label(), "Stopped");
+        assert_eq!(RunState::Error("oops".into()).label(), "Error");
+    }
+
+    #[test]
+    fn test_stats_pass_rate_zero_reads() {
+        let stats = StatsSnapshot::default();
+        assert_eq!(stats.pass_rate(), 0.0);
+    }
+
+    #[test]
+    fn test_stats_pass_rate_all_passed() {
+        let stats = StatsSnapshot {
+            reads_passed: 100,
+            reads_failed: 0,
+            ..Default::default()
+        };
+        assert_eq!(stats.pass_rate(), 100.0);
+    }
+
+    #[test]
+    fn test_stats_pass_rate_all_failed() {
+        let stats = StatsSnapshot {
+            reads_passed: 0,
+            reads_failed: 100,
+            ..Default::default()
+        };
+        assert_eq!(stats.pass_rate(), 0.0);
+    }
+
+    #[test]
+    fn test_stats_pass_rate_mixed() {
+        let stats = StatsSnapshot {
+            reads_passed: 75,
+            reads_failed: 25,
+            ..Default::default()
+        };
+        assert_eq!(stats.pass_rate(), 75.0);
+    }
+
+    #[test]
+    fn test_device_state_default() {
+        assert_eq!(DeviceState::default(), DeviceState::Ready);
+    }
+
+    #[test]
+    fn test_position_state_default() {
+        assert_eq!(PositionState::default(), PositionState::Idle);
+    }
+
+    #[test]
+    fn test_run_state_default() {
+        assert_eq!(RunState::default(), RunState::Idle);
+    }
+}

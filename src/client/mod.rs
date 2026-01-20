@@ -63,7 +63,11 @@ impl ReconnectPolicy {
         let capped_delay = base_delay.min(self.max_delay.as_secs_f64());
 
         let jitter_range = capped_delay * self.jitter_fraction;
-        let jitter = rand::rng().random_range(-jitter_range..jitter_range);
+        let jitter = if jitter_range > 0.0 {
+            rand::rng().random_range(-jitter_range..jitter_range)
+        } else {
+            0.0
+        };
         let final_delay = (capped_delay + jitter).max(0.0);
 
         Duration::from_secs_f64(final_delay)
@@ -297,5 +301,80 @@ impl std::fmt::Debug for Client {
         f.debug_struct("Client")
             .field("endpoint", &self.endpoint)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_reconnect_policy_default() {
+        let policy = ReconnectPolicy::default();
+        assert_eq!(policy.initial_delay, Duration::from_secs(1));
+        assert_eq!(policy.max_delay, Duration::from_secs(30));
+        assert_eq!(policy.multiplier, 2.0);
+        assert!(policy.max_attempts.is_none());
+    }
+
+    #[test]
+    fn test_reconnect_policy_exponential_backoff() {
+        let policy = ReconnectPolicy {
+            initial_delay: Duration::from_secs(1),
+            max_delay: Duration::from_secs(60),
+            multiplier: 2.0,
+            jitter_fraction: 0.0,
+            max_attempts: None,
+        };
+
+        let d0 = policy.delay_for_attempt(0);
+        let d1 = policy.delay_for_attempt(1);
+        let d2 = policy.delay_for_attempt(2);
+
+        assert_eq!(d0, Duration::from_secs(1));
+        assert_eq!(d1, Duration::from_secs(2));
+        assert_eq!(d2, Duration::from_secs(4));
+    }
+
+    #[test]
+    fn test_reconnect_policy_respects_max_delay() {
+        let policy = ReconnectPolicy {
+            initial_delay: Duration::from_secs(1),
+            max_delay: Duration::from_secs(5),
+            multiplier: 10.0,
+            jitter_fraction: 0.0,
+            max_attempts: None,
+        };
+
+        let d2 = policy.delay_for_attempt(2);
+        assert_eq!(d2, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn test_reconnect_policy_jitter_range() {
+        let policy = ReconnectPolicy {
+            initial_delay: Duration::from_secs(10),
+            max_delay: Duration::from_secs(60),
+            multiplier: 1.0,
+            jitter_fraction: 0.1,
+            max_attempts: None,
+        };
+
+        let mut min_seen = Duration::from_secs(100);
+        let mut max_seen = Duration::from_secs(0);
+
+        for _ in 0..100 {
+            let d = policy.delay_for_attempt(0);
+            if d < min_seen {
+                min_seen = d;
+            }
+            if d > max_seen {
+                max_seen = d;
+            }
+        }
+
+        assert!(min_seen >= Duration::from_secs(9));
+        assert!(max_seen <= Duration::from_secs(11));
+        assert!(min_seen != max_seen);
     }
 }
