@@ -3,14 +3,38 @@
 //! This is the binary entry point. It parses CLI arguments and dispatches
 //! to either the TUI or CLI commands.
 
+use std::process::ExitCode;
+
 use clap::Parser;
-use termion::cli::{Cli, Commands};
+use termion::cli::{exit_code_for_error, Cli, Commands, Exit};
 use termion::config::Config;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+async fn main() -> ExitCode {
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => {
+            e.print().ok();
+            return match e.kind() {
+                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
+                    Exit::Ok.into()
+                }
+                _ => Exit::Args.into(),
+            };
+        }
+    };
 
+    match run(cli).await {
+        Ok(()) => Exit::Ok.into(),
+        Err(e) => {
+            let exit = exit_code_for_error(&e);
+            eprintln!("Error: {e}");
+            exit.into()
+        }
+    }
+}
+
+async fn run(cli: Cli) -> anyhow::Result<()> {
     // Load configuration with proper precedence
     let config = Config::load(&cli)?;
 

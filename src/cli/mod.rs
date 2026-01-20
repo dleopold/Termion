@@ -2,8 +2,11 @@
 
 use clap::{Parser, Subcommand};
 
+pub mod exit;
 pub mod list;
 pub mod status;
+
+pub use exit::{exit_code_for_error, Exit};
 
 /// Termion — Monitor MinKNOW sequencing runs
 #[derive(Parser, Debug)]
