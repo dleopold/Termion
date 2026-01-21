@@ -82,6 +82,9 @@ impl Config {
             if let Some(history) = tui.chart_history {
                 self.tui.chart_history = Duration::from_secs(history);
             }
+            if let Some(theme) = tui.theme {
+                self.tui.theme = theme;
+            }
         }
 
         if let Some(reconnect) = file.reconnect {
@@ -261,6 +264,7 @@ mod tests {
             tui: Some(FileTuiConfig {
                 refresh_interval: Some(500),
                 chart_history: Some(3600),
+                theme: None,
             }),
             reconnect: None,
             logging: None,

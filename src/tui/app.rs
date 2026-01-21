@@ -1,5 +1,6 @@
 //! Application state and core logic.
 
+use super::theme::Theme;
 use crate::client::{
     ChannelLayout, ChannelStatesSnapshot, DutyTimeSnapshot, Position, ReadLengthHistogram,
     RunState, StatsSnapshot, YieldDataPoint,
@@ -85,6 +86,7 @@ pub enum ConnectionState {
 
 pub struct App {
     pub config: Config,
+    pub theme: Theme,
     pub screen: Screen,
     pub overlay: Overlay,
     pub connection: ConnectionState,
@@ -135,8 +137,10 @@ impl ChartBuffer {
 
 impl App {
     pub fn new(config: Config) -> Self {
+        let theme = Theme::by_name(&config.tui.theme).unwrap_or_default();
         Self {
             config,
+            theme,
             screen: Screen::Overview,
             overlay: Overlay::None,
             connection: ConnectionState::Connecting,

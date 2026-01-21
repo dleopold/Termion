@@ -5,6 +5,7 @@
 
 mod app;
 mod event;
+pub mod theme;
 mod ui;
 
 pub use app::{

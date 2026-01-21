@@ -1,6 +1,7 @@
 //! UI rendering functions.
 
 use super::app::{App, ConnectionState, DetailChart, Overlay, RunControlAction, Screen, YieldUnit};
+use super::theme::Theme;
 use crate::client::{
     ChannelLayout, ChannelStatesSnapshot, Position, PositionState, ReadLengthHistogram, RunState,
     StatsSnapshot,
@@ -19,6 +20,7 @@ use ratatui::{
 
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
+    let t = &app.theme;
 
     match &app.screen {
         Screen::Overview => render_overview(frame, app, area),
@@ -30,17 +32,17 @@ pub fn render(frame: &mut Frame, app: &App) {
     match &app.overlay {
         Overlay::Help => {
             if let Some(help_area) = centered_rect(50, 45, area) {
-                render_help_overlay(frame, help_area);
+                render_help_overlay(frame, t, help_area);
             }
         }
         Overlay::Error { message } => {
             if let Some(error_area) = centered_rect(50, 30, area) {
-                render_error_overlay(frame, message, error_area);
+                render_error_overlay(frame, t, message, error_area);
             }
         }
         Overlay::RangeInput { max_input } => {
             if let Some(range_area) = centered_rect(35, 18, area) {
-                render_range_input_overlay(frame, max_input, range_area);
+                render_range_input_overlay(frame, t, max_input, range_area);
             }
         }
         Overlay::Confirmation {
@@ -48,7 +50,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             position_name,
         } => {
             if let Some(confirm_area) = centered_rect(45, 22, area) {
-                render_confirmation_overlay(frame, *action, position_name, confirm_area);
+                render_confirmation_overlay(frame, t, *action, position_name, confirm_area);
             }
         }
         Overlay::None => {}
@@ -71,25 +73,24 @@ fn render_overview(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_header(frame: &mut Frame, app: &App, area: Rect) {
+    let t = &app.theme;
     let status = match &app.connection {
-        ConnectionState::Connected => {
-            Span::styled(" ● Connected ", Style::default().fg(Color::Green))
-        }
+        ConnectionState::Connected => Span::styled(" ● Connected ", Style::default().fg(t.success)),
         ConnectionState::Connecting => {
-            Span::styled(" ◌ Connecting... ", Style::default().fg(Color::Yellow))
+            Span::styled(" ◌ Connecting... ", Style::default().fg(t.warning))
         }
         ConnectionState::Disconnected { reason, .. } => Span::styled(
             format!(" ○ Disconnected: {} ", reason),
-            Style::default().fg(Color::Red),
+            Style::default().fg(t.error),
         ),
         ConnectionState::Reconnecting { attempt } => Span::styled(
             format!(" ◌ Reconnecting (attempt {})... ", attempt),
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(t.warning),
         ),
     };
 
     let title = Line::from(vec![
-        Span::styled(" Termion ", Style::default().bold()),
+        Span::styled(" Termion ", Style::default().bold().fg(t.text)),
         Span::raw("│"),
         status,
     ]);
@@ -97,13 +98,14 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     let header = Paragraph::new(title).block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan)),
+            .border_style(Style::default().fg(t.border)),
     );
 
     frame.render_widget(header, area);
 }
 
 fn render_position_table(frame: &mut Frame, app: &App, area: Rect) {
+    let t = &app.theme;
     let header = Row::new(vec![
         "Position",
         "State",
@@ -156,7 +158,7 @@ fn render_position_table(frame: &mut Frame, app: &App, area: Rect) {
                 .unwrap_or_else(|| "--".to_string());
 
             let style = if idx == app.selected_position {
-                Style::default().bg(Color::DarkGray).fg(Color::White)
+                Style::default().bg(t.selection_bg).fg(t.selection_fg)
             } else {
                 Style::default()
             };
@@ -189,18 +191,19 @@ fn render_position_table(frame: &mut Frame, app: &App, area: Rect) {
             Block::default()
                 .title(" Positions ")
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan)),
+                .border_style(Style::default().fg(t.border)),
         )
         .row_highlight_style(Style::default().add_modifier(Modifier::BOLD));
 
     frame.render_widget(table, area);
 }
 
-fn render_footer(frame: &mut Frame, _app: &App, area: Rect) {
+fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
+    let t = &app.theme;
     let hints = "[↑↓] Navigate  [Enter] Details  [q] Quit  [?] Help";
 
     let footer = Paragraph::new(hints)
-        .style(Style::default().fg(Color::DarkGray))
+        .style(Style::default().fg(t.text_dim))
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL));
 
@@ -208,6 +211,7 @@ fn render_footer(frame: &mut Frame, _app: &App, area: Rect) {
 }
 
 fn render_detail_footer(frame: &mut Frame, app: &App, area: Rect) {
+    let t = &app.theme;
     let chart_hints = match app.detail_chart {
         DetailChart::Yield => "[t] Reads/Bases  ".to_string(),
         DetailChart::ReadLength => {
@@ -223,7 +227,7 @@ fn render_detail_footer(frame: &mut Frame, app: &App, area: Rect) {
     let hints = format!("[Esc] Back  [1/2/3|Tab] Charts  {}[?] Help", chart_hints);
 
     let footer = Paragraph::new(hints)
-        .style(Style::default().fg(Color::DarkGray))
+        .style(Style::default().fg(t.text_dim))
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL));
 
@@ -231,11 +235,12 @@ fn render_detail_footer(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_position_detail(frame: &mut Frame, app: &App, position_idx: usize, area: Rect) {
+    let t = &app.theme;
     let position = match app.positions.get(position_idx) {
         Some(p) => p,
         None => {
             let msg = Paragraph::new("Position not found")
-                .style(Style::default().fg(Color::Red))
+                .style(Style::default().fg(t.error))
                 .alignment(Alignment::Center);
             frame.render_widget(msg, area);
             return;
@@ -255,9 +260,9 @@ fn render_position_detail(frame: &mut Frame, app: &App, position_idx: usize, are
         .split(area);
 
     let run_state = app.get_run_state(&position.name);
-    render_detail_header(frame, position, run_state, chunks[0]);
+    render_detail_header(frame, t, position, run_state, chunks[0]);
     let histogram = app.histograms.get(&position.name);
-    render_run_info(frame, position, stats, histogram, chunks[1]);
+    render_run_info(frame, t, position, stats, histogram, chunks[1]);
 
     match app.detail_chart {
         DetailChart::Yield => render_yield_chart(frame, app, &position.name, chunks[2]),
@@ -265,6 +270,7 @@ fn render_position_detail(frame: &mut Frame, app: &App, position_idx: usize, are
             let histogram = app.histograms.get(&position.name);
             render_histogram_chart(
                 frame,
+                t,
                 histogram,
                 app.exclude_outliers,
                 app.histogram_range,
@@ -274,7 +280,7 @@ fn render_position_detail(frame: &mut Frame, app: &App, position_idx: usize, are
         DetailChart::PoreActivity => {
             let channel_states = app.channel_states.get(&position.name);
             let channel_layout = app.channel_layouts.get(&position.name);
-            render_pore_activity(frame, channel_states, channel_layout, chunks[2]);
+            render_pore_activity(frame, t, channel_states, channel_layout, chunks[2]);
         }
     }
 
@@ -283,30 +289,31 @@ fn render_position_detail(frame: &mut Frame, app: &App, position_idx: usize, are
 
 fn render_detail_header(
     frame: &mut Frame,
+    t: &Theme,
     position: &Position,
     run_state: Option<&RunState>,
     area: Rect,
 ) {
     let (state_color, state_indicator) = match run_state {
-        Some(RunState::Running) => (Color::Green, "● Running"),
-        Some(RunState::MuxScanning) => (Color::Magenta, "◉ Pore Scan"),
-        Some(RunState::Paused) => (Color::Yellow, "⏸ Paused"),
-        Some(RunState::Starting) => (Color::Cyan, "◐ Starting"),
-        Some(RunState::Finishing) => (Color::Yellow, "◑ Finishing"),
-        Some(RunState::Stopped) => (Color::DarkGray, "○ Stopped"),
-        Some(RunState::Error(_)) => (Color::Red, "✖ Error"),
+        Some(RunState::Running) => (t.success, "● Running"),
+        Some(RunState::MuxScanning) => (t.special, "◉ Pore Scan"),
+        Some(RunState::Paused) => (t.warning, "⏸ Paused"),
+        Some(RunState::Starting) => (t.info, "◐ Starting"),
+        Some(RunState::Finishing) => (t.warning, "◑ Finishing"),
+        Some(RunState::Stopped) => (t.idle, "○ Stopped"),
+        Some(RunState::Error(_)) => (t.error, "✖ Error"),
         Some(RunState::Idle) | None => match position.state {
-            PositionState::Running => (Color::Green, "● Running"),
-            PositionState::Idle => (Color::DarkGray, "○ Idle"),
-            PositionState::Error => (Color::Red, "✖ Error"),
-            _ => (Color::White, "? Unknown"),
+            PositionState::Running => (t.success, "● Running"),
+            PositionState::Idle => (t.idle, "○ Idle"),
+            PositionState::Error => (t.error, "✖ Error"),
+            _ => (t.text, "? Unknown"),
         },
     };
 
     let title = Line::from(vec![
         Span::styled(
             format!(" {} ", position.name),
-            Style::default().bold().fg(Color::Cyan),
+            Style::default().bold().fg(t.text_title),
         ),
         Span::raw("── "),
         Span::styled(state_indicator, Style::default().fg(state_color).bold()),
@@ -315,7 +322,7 @@ fn render_detail_header(
     let header = Paragraph::new(title).block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan)),
+            .border_style(Style::default().fg(t.border)),
     );
 
     frame.render_widget(header, area);
@@ -323,6 +330,7 @@ fn render_detail_header(
 
 fn render_run_info(
     frame: &mut Frame,
+    t: &Theme,
     _position: &Position,
     stats: Option<&StatsSnapshot>,
     histogram: Option<&ReadLengthHistogram>,
@@ -336,58 +344,58 @@ fn render_run_info(
     let content = if let Some(s) = stats {
         vec![
             Line::from(vec![
-                Span::styled("Reads: ", Style::default().fg(Color::DarkGray)),
+                Span::styled("Reads: ", Style::default().fg(t.text_dim)),
                 Span::styled(
                     format_number(s.reads_processed),
-                    Style::default().bold().fg(Color::Cyan),
+                    Style::default().bold().fg(t.text_title),
                 ),
                 Span::raw("  "),
                 Span::styled(
                     format_number(s.reads_passed),
-                    Style::default().fg(Color::Green),
+                    Style::default().fg(t.chart_passed),
                 ),
-                Span::styled(" passed  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(" passed  ", Style::default().fg(t.text_dim)),
                 Span::styled(
                     format_number(s.reads_failed),
-                    Style::default().fg(Color::Red),
+                    Style::default().fg(t.chart_failed),
                 ),
-                Span::styled(" failed", Style::default().fg(Color::DarkGray)),
+                Span::styled(" failed", Style::default().fg(t.text_dim)),
             ]),
             Line::from(vec![
-                Span::styled("Bases: ", Style::default().fg(Color::DarkGray)),
+                Span::styled("Bases: ", Style::default().fg(t.text_dim)),
                 Span::styled(
                     format_bytes(s.bases_called),
-                    Style::default().bold().fg(Color::Cyan),
+                    Style::default().bold().fg(t.text_title),
                 ),
                 Span::raw("  "),
                 Span::styled(
                     format_bytes(s.bases_passed),
-                    Style::default().fg(Color::Green),
+                    Style::default().fg(t.chart_passed),
                 ),
-                Span::styled(" passed  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(" passed  ", Style::default().fg(t.text_dim)),
                 Span::styled(
                     format_bytes(s.bases_failed),
-                    Style::default().fg(Color::Red),
+                    Style::default().fg(t.chart_failed),
                 ),
-                Span::styled(" failed", Style::default().fg(Color::DarkGray)),
+                Span::styled(" failed", Style::default().fg(t.text_dim)),
             ]),
             Line::from(vec![
-                Span::styled("Throughput: ", Style::default().fg(Color::DarkGray)),
+                Span::styled("Throughput: ", Style::default().fg(t.text_dim)),
                 Span::styled(
                     format_throughput_gbph(s.throughput_gbph),
                     Style::default().bold(),
                 ),
                 Span::raw("    "),
-                Span::styled("Pass Rate: ", Style::default().fg(Color::DarkGray)),
+                Span::styled("Pass Rate: ", Style::default().fg(t.text_dim)),
                 Span::styled(format!("{:.1}%", s.pass_rate()), Style::default().bold()),
                 Span::raw("    "),
-                Span::styled("Active Pores: ", Style::default().fg(Color::DarkGray)),
+                Span::styled("Active Pores: ", Style::default().fg(t.text_dim)),
                 Span::styled(
                     format_number(s.active_pores as u64),
                     Style::default().bold(),
                 ),
                 Span::raw("    "),
-                Span::styled("N50: ", Style::default().fg(Color::DarkGray)),
+                Span::styled("N50: ", Style::default().fg(t.text_dim)),
                 Span::styled(n50_text, Style::default().bold()),
             ]),
         ]
@@ -399,26 +407,27 @@ fn render_run_info(
         Block::default()
             .title(" Run Info ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan)),
+            .border_style(Style::default().fg(t.border)),
     );
 
     frame.render_widget(info, area);
 }
 
 fn render_yield_chart(frame: &mut Frame, app: &App, position_name: &str, area: Rect) {
+    let t = &app.theme;
     let yield_data = app.yield_history.get(position_name);
 
     let yield_points = match yield_data {
         Some(points) if !points.is_empty() => points,
         _ => {
             let placeholder = Paragraph::new("Waiting for data...")
-                .style(Style::default().fg(Color::DarkGray))
+                .style(Style::default().fg(t.text_dim))
                 .alignment(Alignment::Center)
                 .block(
                     Block::default()
                         .title(" Cumulative Yield ")
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Cyan)),
+                        .border_style(Style::default().fg(t.border)),
                 );
             frame.render_widget(placeholder, area);
             return;
@@ -518,19 +527,19 @@ fn render_yield_chart(frame: &mut Frame, app: &App, position_name: &str, area: R
             .name("Failed")
             .marker(symbols::Marker::Braille)
             .graph_type(GraphType::Line)
-            .style(Style::default().fg(Color::Red))
+            .style(Style::default().fg(t.chart_failed))
             .data(&failed_data),
         Dataset::default()
             .name("Passed")
             .marker(symbols::Marker::Braille)
             .graph_type(GraphType::Line)
-            .style(Style::default().fg(Color::Green))
+            .style(Style::default().fg(t.chart_passed))
             .data(&passed_data),
         Dataset::default()
             .name("Total")
             .marker(symbols::Marker::Braille)
             .graph_type(GraphType::Line)
-            .style(Style::default().fg(Color::Cyan))
+            .style(Style::default().fg(t.chart_line))
             .data(&total_data),
     ];
 
@@ -541,17 +550,17 @@ fn render_yield_chart(frame: &mut Frame, app: &App, position_name: &str, area: R
             Block::default()
                 .title(format!(" {} ", title))
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan)),
+                .border_style(Style::default().fg(t.border)),
         )
         .x_axis(
             Axis::default()
-                .style(Style::default().fg(Color::DarkGray))
+                .style(Style::default().fg(t.chart_axis))
                 .bounds([0.0, max_x - min_x])
                 .labels(vec![Line::from("0"), Line::from(time_label)]),
         )
         .y_axis(
             Axis::default()
-                .style(Style::default().fg(Color::DarkGray))
+                .style(Style::default().fg(t.chart_axis))
                 .bounds([min_y, max_y])
                 .labels(vec![
                     Line::from(format!("{:.1}", min_y)),
@@ -566,6 +575,7 @@ fn render_yield_chart(frame: &mut Frame, app: &App, position_name: &str, area: R
 
 fn render_histogram_chart(
     frame: &mut Frame,
+    t: &Theme,
     histogram: Option<&ReadLengthHistogram>,
     exclude_outliers: bool,
     histogram_range: Option<(u64, u64)>,
@@ -591,13 +601,13 @@ fn render_histogram_chart(
         Some(h) if !h.bucket_values.is_empty() => h,
         _ => {
             let placeholder = Paragraph::new("Waiting for histogram data...")
-                .style(Style::default().fg(Color::DarkGray))
+                .style(Style::default().fg(t.text_dim))
                 .alignment(Alignment::Center)
                 .block(
                     Block::default()
                         .title(title)
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Magenta)),
+                        .border_style(Style::default().fg(t.special)),
                 );
             frame.render_widget(placeholder, area);
             return;
@@ -645,31 +655,31 @@ fn render_histogram_chart(
     if chart_height >= 6 {
         y_axis_lines.push(Line::from(Span::styled(
             format!("{:>6}", format_number(y_max_rounded)),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(t.chart_axis),
         )));
         for _ in 0..(chart_height.saturating_sub(3) / 2) {
             y_axis_lines.push(Line::from(""));
         }
         y_axis_lines.push(Line::from(Span::styled(
             format!("{:>6}", format_number(y_max_rounded / 2)),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(t.chart_axis),
         )));
         for _ in 0..(chart_height.saturating_sub(3) / 2) {
             y_axis_lines.push(Line::from(""));
         }
         y_axis_lines.push(Line::from(Span::styled(
             format!("{:>6}", "0"),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(t.chart_axis),
         )));
     } else {
         y_axis_lines.push(Line::from(Span::styled(
             format!("{:>6}", format_number(y_max_rounded)),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(t.chart_axis),
         )));
         y_axis_lines.push(Line::from(""));
         y_axis_lines.push(Line::from(Span::styled(
             format!("{:>6}", "0"),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(t.chart_axis),
         )));
     }
 
@@ -689,7 +699,7 @@ fn render_histogram_chart(
                 .value(count)
                 .label(Line::from(""))
                 .text_value(String::new())
-                .style(Style::default().fg(Color::Magenta))
+                .style(Style::default().fg(t.special))
         })
         .collect();
 
@@ -699,7 +709,7 @@ fn render_histogram_chart(
                 .title(title)
                 .title_bottom(Line::from(range_label).alignment(Alignment::Center))
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Magenta)),
+                .border_style(Style::default().fg(t.special)),
         )
         .data(BarGroup::default().bars(&bars))
         .bar_width(bar_width)
@@ -711,6 +721,7 @@ fn render_histogram_chart(
 
 fn render_pore_activity(
     frame: &mut Frame,
+    t: &Theme,
     channel_states: Option<&ChannelStatesSnapshot>,
     channel_layout: Option<&ChannelLayout>,
     area: Rect,
@@ -721,13 +732,13 @@ fn render_pore_activity(
         Some(cs) if !cs.states.is_empty() => cs,
         _ => {
             let placeholder = Paragraph::new("Waiting for channel data...")
-                .style(Style::default().fg(Color::DarkGray))
+                .style(Style::default().fg(t.text_dim))
                 .alignment(Alignment::Center)
                 .block(
                     Block::default()
                         .title(title)
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Yellow)),
+                        .border_style(Style::default().fg(t.warning)),
                 );
             frame.render_widget(placeholder, area);
             return;
@@ -739,12 +750,13 @@ fn render_pore_activity(
         .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
         .split(area);
 
-    render_pore_grid_from_states(frame, channel_states, channel_layout, chunks[0]);
-    render_state_counts(frame, channel_states, chunks[1]);
+    render_pore_grid_from_states(frame, t, channel_states, channel_layout, chunks[0]);
+    render_state_counts(frame, t, channel_states, chunks[1]);
 }
 
 fn render_pore_grid_from_states(
     frame: &mut Frame,
+    t: &Theme,
     channel_states: &ChannelStatesSnapshot,
     channel_layout: Option<&ChannelLayout>,
     area: Rect,
@@ -752,7 +764,7 @@ fn render_pore_grid_from_states(
     let inner = Block::default()
         .title(" Channel Map ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
+        .border_style(Style::default().fg(t.warning));
 
     let inner_area = inner.inner(area);
     frame.render_widget(inner, area);
@@ -843,9 +855,9 @@ fn render_pore_grid_from_states(
 
             let (symbol, color) = match channel_idx {
                 Some(idx) if idx < channel_states.states.len() => {
-                    state_to_symbol(&channel_states.states[idx])
+                    state_to_symbol(t, &channel_states.states[idx])
                 }
-                _ => ("  ", Color::Black),
+                _ => ("  ", t.channel_empty),
             };
             spans.push(Span::styled(symbol, Style::default().fg(color)));
         }
@@ -857,7 +869,12 @@ fn render_pore_grid_from_states(
     frame.render_widget(grid, inner_area);
 }
 
-fn render_state_counts(frame: &mut Frame, channel_states: &ChannelStatesSnapshot, area: Rect) {
+fn render_state_counts(
+    frame: &mut Frame,
+    t: &Theme,
+    channel_states: &ChannelStatesSnapshot,
+    area: Rect,
+) {
     let total = channel_states.channel_count;
 
     let mut lines: Vec<Line> = vec![
@@ -872,11 +889,11 @@ fn render_state_counts(frame: &mut Frame, channel_states: &ChannelStatesSnapshot
     let other = total.saturating_sub(sequencing + pore_available + unavailable + inactive);
 
     let categories = [
-        ("Sequencing", sequencing, Color::Green),
-        ("Pore Available", pore_available, Color::Blue),
-        ("Unavailable", unavailable, Color::Magenta),
-        ("Inactive", inactive, Color::Cyan),
-        ("Other", other, Color::DarkGray),
+        ("Sequencing", sequencing, t.channel_sequencing),
+        ("Pore Available", pore_available, t.channel_pore),
+        ("Unavailable", unavailable, t.channel_unavailable),
+        ("Inactive", inactive, t.channel_inactive),
+        ("Other", other, t.channel_other),
     ];
 
     for (label, count, color) in &categories {
@@ -890,16 +907,13 @@ fn render_state_counts(frame: &mut Frame, channel_states: &ChannelStatesSnapshot
             Span::styled("● ", Style::default().fg(*color)),
             Span::styled(format!("{:>4}", count), Style::default().bold()),
             Span::styled(format!(" {:14}", label), Style::default()),
-            Span::styled(
-                format!("{:5.1}%", percent),
-                Style::default().fg(Color::DarkGray),
-            ),
+            Span::styled(format!("{:5.1}%", percent), Style::default().fg(t.text_dim)),
         ]));
     }
 
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
-        Span::styled("Total: ", Style::default().fg(Color::DarkGray)),
+        Span::styled("Total: ", Style::default().fg(t.text_dim)),
         Span::styled(format!("{}", total), Style::default().bold()),
         Span::raw(" channels"),
     ]));
@@ -908,30 +922,30 @@ fn render_state_counts(frame: &mut Frame, channel_states: &ChannelStatesSnapshot
         Block::default()
             .title(" Statistics ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Yellow)),
+            .border_style(Style::default().fg(t.warning)),
     );
 
     frame.render_widget(breakdown, area);
 }
 
-fn state_to_symbol(state: &str) -> (&'static str, Color) {
+fn state_to_symbol(t: &Theme, state: &str) -> (&'static str, Color) {
     let s = state.to_lowercase();
     if s.contains("strand") || s.contains("sequencing") {
-        ("██", Color::Green)
+        ("██", t.channel_sequencing)
     } else if s.contains("pore") || s.contains("single") {
-        ("██", Color::Blue)
+        ("██", t.channel_pore)
     } else if s.contains("unavailable") || s.contains("saturated") {
-        ("░░", Color::Magenta)
+        ("░░", t.channel_unavailable)
     } else if s.contains("inactive") || s.contains("zero") || s.contains("multiple") {
-        ("░░", Color::Cyan)
+        ("░░", t.channel_inactive)
     } else if s.contains("adapter") || s.contains("event") {
-        ("▓▓", Color::Yellow)
+        ("▓▓", t.channel_adapter)
     } else if s.contains("unblock") {
-        ("▒▒", Color::Yellow)
+        ("▒▒", t.channel_adapter)
     } else if s.is_empty() || s == "unknown" {
-        ("  ", Color::Black)
+        ("  ", t.channel_empty)
     } else {
-        ("░░", Color::DarkGray)
+        ("░░", t.channel_other)
     }
 }
 
@@ -945,11 +959,11 @@ fn format_time_label(seconds: f64) -> String {
     }
 }
 
-fn render_help_overlay(frame: &mut Frame, area: Rect) {
-    let key_style = Style::default().fg(Color::Yellow).bold();
-    let desc_style = Style::default().fg(Color::White);
-    let section_style = Style::default().fg(Color::Cyan).bold();
-    let dim_style = Style::default().fg(Color::DarkGray);
+fn render_help_overlay(frame: &mut Frame, t: &Theme, area: Rect) {
+    let key_style = Style::default().fg(t.key_hint).bold();
+    let desc_style = Style::default().fg(t.text);
+    let section_style = Style::default().fg(t.text_title).bold();
+    let dim_style = Style::default().fg(t.text_dim);
 
     let help_text = vec![
         Line::from(""),
@@ -1020,29 +1034,23 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         .block(
             Block::default()
                 .title(" Keyboard Shortcuts ")
-                .title_style(Style::default().fg(Color::Cyan).bold())
+                .title_style(Style::default().fg(t.text_title).bold())
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray))
-                .style(Style::default().bg(Color::Black)),
+                .border_style(Style::default().fg(t.border_dim))
+                .style(Style::default().bg(t.background)),
         );
 
     frame.render_widget(ratatui::widgets::Clear, area);
     frame.render_widget(help, area);
 }
 
-fn render_error_overlay(frame: &mut Frame, message: &str, area: Rect) {
+fn render_error_overlay(frame: &mut Frame, t: &Theme, message: &str, area: Rect) {
     let error = Paragraph::new(vec![
-        Line::from(Span::styled(
-            "Error",
-            Style::default().bold().fg(Color::Red),
-        )),
+        Line::from(Span::styled("Error", Style::default().bold().fg(t.error))),
         Line::from(""),
         Line::from(message),
         Line::from(""),
-        Line::from(Span::styled(
-            "[Esc] Close",
-            Style::default().fg(Color::DarkGray),
-        )),
+        Line::from(Span::styled("[Esc] Close", Style::default().fg(t.text_dim))),
     ])
     .alignment(Alignment::Center)
     .wrap(Wrap { trim: true })
@@ -1050,15 +1058,15 @@ fn render_error_overlay(frame: &mut Frame, message: &str, area: Rect) {
         Block::default()
             .title(" Error ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Red))
-            .style(Style::default().bg(Color::Black)),
+            .border_style(Style::default().fg(t.error))
+            .style(Style::default().bg(t.background)),
     );
 
     frame.render_widget(ratatui::widgets::Clear, area);
     frame.render_widget(error, area);
 }
 
-fn render_range_input_overlay(frame: &mut Frame, max_input: &str, area: Rect) {
+fn render_range_input_overlay(frame: &mut Frame, t: &Theme, max_input: &str, area: Rect) {
     let max_display = if max_input.is_empty() {
         "(empty = full range)".to_string()
     } else {
@@ -1068,18 +1076,18 @@ fn render_range_input_overlay(frame: &mut Frame, max_input: &str, area: Rect) {
     let content = vec![
         Line::from(Span::styled(
             "Set Max Read Length",
-            Style::default().bold().fg(Color::Cyan),
+            Style::default().bold().fg(t.text_title),
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled("Max: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(max_display, Style::default().fg(Color::Yellow).bold()),
-            Span::styled("_", Style::default().fg(Color::Yellow)),
+            Span::styled("Max: ", Style::default().fg(t.text_dim)),
+            Span::styled(max_display, Style::default().fg(t.key_hint).bold()),
+            Span::styled("_", Style::default().fg(t.key_hint)),
         ]),
         Line::from(""),
         Line::from(Span::styled(
             "Type number | ↑/↓ ±1000 | Enter | Esc",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(t.text_dim),
         )),
     ];
 
@@ -1087,8 +1095,8 @@ fn render_range_input_overlay(frame: &mut Frame, max_input: &str, area: Rect) {
         Block::default()
             .title(" Range ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Magenta))
-            .style(Style::default().bg(Color::Black)),
+            .border_style(Style::default().fg(t.special))
+            .style(Style::default().bg(t.background)),
     );
 
     frame.render_widget(ratatui::widgets::Clear, area);
@@ -1097,14 +1105,15 @@ fn render_range_input_overlay(frame: &mut Frame, max_input: &str, area: Rect) {
 
 fn render_confirmation_overlay(
     frame: &mut Frame,
+    t: &Theme,
     action: RunControlAction,
     position_name: &str,
     area: Rect,
 ) {
     let (title_color, border_color) = match action {
-        RunControlAction::Stop => (Color::Red, Color::Red),
-        RunControlAction::Pause => (Color::Yellow, Color::Yellow),
-        RunControlAction::Resume => (Color::Green, Color::Green),
+        RunControlAction::Stop => (t.error, t.error),
+        RunControlAction::Pause => (t.warning, t.warning),
+        RunControlAction::Resume => (t.success, t.success),
     };
 
     let content = vec![
@@ -1115,17 +1124,17 @@ fn render_confirmation_overlay(
         Line::from(""),
         Line::from(Span::styled(
             format!("Position: {}", position_name),
-            Style::default().fg(Color::Cyan),
+            Style::default().fg(t.text_title),
         )),
         Line::from(""),
         Line::from(action.confirmation_message()),
         Line::from(""),
         Line::from(vec![
-            Span::styled("[Enter] ", Style::default().fg(Color::Yellow).bold()),
+            Span::styled("[Enter] ", Style::default().fg(t.key_hint).bold()),
             Span::styled("Confirm", Style::default()),
             Span::raw("    "),
-            Span::styled("[Esc] ", Style::default().fg(Color::DarkGray).bold()),
-            Span::styled("Cancel", Style::default().fg(Color::DarkGray)),
+            Span::styled("[Esc] ", Style::default().fg(t.text_dim).bold()),
+            Span::styled("Cancel", Style::default().fg(t.text_dim)),
         ]),
     ];
 
@@ -1134,7 +1143,7 @@ fn render_confirmation_overlay(
             .title(format!(" {} ", action.label()))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color))
-            .style(Style::default().bg(Color::Black)),
+            .style(Style::default().bg(t.background)),
     );
 
     frame.render_widget(ratatui::widgets::Clear, area);

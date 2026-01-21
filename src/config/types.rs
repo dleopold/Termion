@@ -48,6 +48,9 @@ pub struct TuiConfig {
 
     /// Chart history duration.
     pub chart_history: Duration,
+
+    /// Color theme name.
+    pub theme: String,
 }
 
 impl Default for TuiConfig {
@@ -55,6 +58,7 @@ impl Default for TuiConfig {
         Self {
             refresh_interval: Duration::from_millis(1000),
             chart_history: Duration::from_secs(1800), // 30 minutes
+            theme: "default".to_string(),
         }
     }
 }
@@ -167,6 +171,7 @@ pub struct FileConnectionConfig {
 pub struct FileTuiConfig {
     pub refresh_interval: Option<u64>,
     pub chart_history: Option<u64>,
+    pub theme: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
