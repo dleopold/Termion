@@ -60,7 +60,35 @@ A showcase-quality TUI for monitoring Oxford Nanopore MinKNOW sequencing runs. B
 
 ## Installation
 
+### Pre-built Binaries (Recommended)
+
+Download the latest release for your platform from [GitHub Releases](https://github.com/dleopold/Termion/releases/latest):
+
+```bash
+# Linux (x86_64)
+curl -LO https://github.com/dleopold/Termion/releases/latest/download/termion-x86_64-unknown-linux-gnu.tar.gz
+tar xzf termion-x86_64-unknown-linux-gnu.tar.gz
+sudo mv termion /usr/local/bin/
+
+# Linux (aarch64/ARM64)
+curl -LO https://github.com/dleopold/Termion/releases/latest/download/termion-aarch64-unknown-linux-gnu.tar.gz
+tar xzf termion-aarch64-unknown-linux-gnu.tar.gz
+sudo mv termion /usr/local/bin/
+
+# macOS (Apple Silicon)
+curl -LO https://github.com/dleopold/Termion/releases/latest/download/termion-aarch64-apple-darwin.tar.gz
+tar xzf termion-aarch64-apple-darwin.tar.gz
+sudo mv termion /usr/local/bin/
+
+# macOS (Intel)
+curl -LO https://github.com/dleopold/Termion/releases/latest/download/termion-x86_64-apple-darwin.tar.gz
+tar xzf termion-x86_64-apple-darwin.tar.gz
+sudo mv termion /usr/local/bin/
+```
+
 ### From Source
+
+Requires Rust 1.70+ and protoc:
 
 ```bash
 # Clone the repository
