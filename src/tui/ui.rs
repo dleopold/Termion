@@ -91,7 +91,6 @@ fn render_position_table(frame: &mut Frame, app: &App, area: Rect) {
         "Run ID",
         "Reads",
         "Bases",
-        "Trend",
         "Throughput",
     ])
     .style(Style::default().bold())
@@ -120,14 +119,8 @@ fn render_position_table(frame: &mut Frame, app: &App, area: Rect) {
                 .unwrap_or_else(|| "--".to_string());
 
             let throughput = stats
-                .map(|s| format!("{:.2} Gb/h", s.throughput_gbph))
+                .map(|s| format_throughput_gbph(s.throughput_gbph))
                 .unwrap_or_else(|| "--".to_string());
-
-            let sparkline = app
-                .chart_data
-                .get(&pos.name)
-                .map(|c| render_mini_sparkline(&c.data, 10))
-                .unwrap_or_else(|| "░░░░░░░░░░".to_string());
 
             let run_id = stats
                 .map(|_| pos.name.clone())
@@ -145,7 +138,6 @@ fn render_position_table(frame: &mut Frame, app: &App, area: Rect) {
                 run_id,
                 reads,
                 bases,
-                sparkline,
                 throughput,
             ])
             .style(style)
@@ -158,7 +150,6 @@ fn render_position_table(frame: &mut Frame, app: &App, area: Rect) {
         Constraint::Length(12),
         Constraint::Length(20),
         Constraint::Length(10),
-        Constraint::Length(12),
         Constraint::Length(12),
         Constraint::Length(12),
     ];
@@ -340,7 +331,7 @@ fn render_run_info(
             Line::from(vec![
                 Span::styled("Throughput: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
-                    format!("{:.2} Gb/h", s.throughput_gbph),
+                    format_throughput_gbph(s.throughput_gbph),
                     Style::default().bold(),
                 ),
                 Span::raw("    "),
@@ -350,26 +341,6 @@ fn render_run_info(
                 Span::styled("Active Pores: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     format_number(s.active_pores as u64),
-                    Style::default().bold(),
-                ),
-                Span::raw("    "),
-                Span::styled("Q: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    if s.mean_quality > 0.0 {
-                        format!("{:.1}", s.mean_quality)
-                    } else {
-                        "--".to_string()
-                    },
-                    Style::default().bold(),
-                ),
-                Span::raw("    "),
-                Span::styled("Len: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    if s.mean_read_length > 0.0 {
-                        format_number(s.mean_read_length as u64)
-                    } else {
-                        "--".to_string()
-                    },
                     Style::default().bold(),
                 ),
             ]),
@@ -975,41 +946,14 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
-fn render_mini_sparkline(data: &[(f64, f64)], width: usize) -> String {
-    if data.is_empty() {
-        return "░".repeat(width);
-    }
-
-    let bars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-
-    let values: Vec<f64> = if data.len() <= width {
-        data.iter().map(|(_, y)| *y).collect()
+fn format_throughput_gbph(gbph: f64) -> String {
+    if gbph <= 0.0 {
+        "--".to_string()
+    } else if gbph >= 1.0 {
+        format!("{:.2} Gb/h", gbph)
+    } else if gbph >= 0.001 {
+        format!("{:.2} Mb/h", gbph * 1_000.0)
     } else {
-        let step = data.len() / width;
-        (0..width)
-            .map(|i| {
-                let start = i * step;
-                let end = ((i + 1) * step).min(data.len());
-                data[start..end].iter().map(|(_, y)| *y).sum::<f64>() / (end - start) as f64
-            })
-            .collect()
-    };
-
-    let max_val = values.iter().fold(0.0f64, |a, &b| a.max(b));
-    if max_val == 0.0 {
-        return "░".repeat(width);
+        format!("{:.2} Kb/h", gbph * 1_000_000.0)
     }
-
-    let mut result = String::with_capacity(width * 3);
-    for &val in &values {
-        let normalized = (val / max_val * 7.0).round() as usize;
-        let idx = normalized.min(7);
-        result.push(bars[idx]);
-    }
-
-    while result.chars().count() < width {
-        result.insert(0, '░');
-    }
-
-    result
 }
