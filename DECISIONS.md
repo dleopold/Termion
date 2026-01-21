@@ -266,3 +266,14 @@ Decisions Log — Termion (Rust TUI for MinKNOW)
 - **Decision:** SemVer
 - **Rationale:** Standard for tools, communicates compatibility. Pre-1.0 signals early stage.
 - **Impacts:** Release process, changelog format.
+
+---
+
+## 8) Display & Visualization
+
+### D8.1 — Channel layout coordinate normalization
+- **Status:** Accepted
+- **Date:** 2026-01-21
+- **Decision:** Normalize sparse physical coordinates to consecutive indices for display
+- **Rationale:** MinKNOW Device Service returns physical coordinates that are sparse (e.g., MinION Y values: 10,13,18,21,26,29,34,37,50,53,58,61,66,69,74,77). These don't map cleanly to a display grid. Normalizing to consecutive 0-based indices (0-15 for rows) allows clean grid rendering while preserving physical structure.
+- **Impacts:** ChannelLayout type stores normalized coords, TUI renders physical gap between sensor blocks (after row 7), grid centers and scales dynamically.

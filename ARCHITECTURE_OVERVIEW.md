@@ -36,10 +36,9 @@ termion/
 │   │   ├── mod.rs
 │   │   ├── connection.rs    # Connection management, reconnect
 │   │   ├── manager.rs       # Manager service wrapper
-│   │   ├── acquisition.rs   # Acquisition service wrapper
-│   │   ├── statistics.rs    # Statistics service wrapper
+│   │   ├── position.rs      # Position client (acquisition, device, data services)
 │   │   ├── error.rs         # Unified error type
-│   │   └── types.rs         # Domain types (Device, Position, etc.)
+│   │   └── types.rs         # Domain types (Device, Position, ChannelLayout, etc.)
 │   │
 │   ├── tui/                 # Terminal UI
 │   │   ├── mod.rs
@@ -162,6 +161,8 @@ MinKNOW gRPC Server
 │   Position        │
 │   RunState        │
 │   StatsSnapshot   │
+│   ChannelLayout   │
+│   ChannelStates   │
 └─────────┬─────────┘
           │
     ┌─────┴─────┐

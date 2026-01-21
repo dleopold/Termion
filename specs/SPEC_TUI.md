@@ -133,6 +133,70 @@ Per decision D4.1: Overview → Position Detail → Overlay
 
 **Data refresh:** Streaming when available, 1s polling fallback
 
+**Tab Navigation:** Use number keys to switch between panels:
+- `1` — Statistics panel (default)
+- `2` — Charts panel
+- `3` — Pore Activity panel
+
+---
+
+### 2a. Pore Activity Panel (Position Detail)
+
+**Purpose:** Visualize real-time channel/pore states on the physical flow cell layout.
+
+```
+┌─ Position 1 ── MinION Mk1C ── Running ────────────────────────┐
+│                                                                │
+│  Run: experiment_2026_01_20    Protocol: LSK114               │
+│  Started: 10:23:45             Elapsed: 02:34:12              │
+│                                                                │
+│  ┌─ Channel Map ───────────────────────────────────────────┐  │
+│  │                                                          │  │
+│  │    ████████████████████████████████████████████████████ │  │
+│  │    ████████████████████████████████████████████████████ │  │
+│  │    ████████████████████████████████████████████████████ │  │
+│  │    ████████████████████████████████████████████████████ │  │
+│  │    ████████████████████████████████████████████████████ │  │
+│  │    ████████████████████████████████████████████████████ │  │
+│  │    ████████████████████████████████████████████████████ │  │
+│  │    ████████████████████████████████████████████████████ │  │
+│  │                         (gap)                            │  │
+│  │    ████████████████████████████████████████████████████ │  │
+│  │    ████████████████████████████████████████████████████ │  │
+│  │    ████████████████████████████████████████████████████ │  │
+│  │    ████████████████████████████████████████████████████ │  │
+│  │    ████████████████████████████████████████████████████ │  │
+│  │    ████████████████████████████████████████████████████ │  │
+│  │    ████████████████████████████████████████████████████ │  │
+│  │    ████████████████████████████████████████████████████ │  │
+│  │                                                          │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                │
+│  ┌─ Channel States ────────────────────────────────────────┐  │
+│  │  strand: 245    pore: 156    adapter: 23    pending: 88 │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                │
+│  [1] Stats  [2] Charts  [3] Pore  [Esc] Back  [?] Help        │
+└───────────────────────────────────────────────────────────────┘
+```
+
+**Components:**
+- Channel Map: Physical flow cell layout (32×16 for MinION = 512 channels)
+  - Visual gap between the two physical sensor blocks (after row 7)
+  - Centered in available space
+  - Dynamically scales down when terminal is small
+  - Color-coded by channel state (strand=green, pore=blue, etc.)
+- Channel States: Summary counts for each state category
+- Footer: Panel navigation hints
+
+**Layout Details:**
+- MinION flow cells have 512 channels in a 32-column × 16-row grid
+- Physical coordinates are sparse (Y values like 10,13,18,21...) 
+- Coordinates are normalized to consecutive 0-15 row indices for display
+- Gap rendered between rows 7 and 8 (separating the two physical blocks)
+- Grid is centered horizontally and vertically in available space
+- Cell size scales uniformly when space is constrained
+
 ---
 
 ### 3. Help Overlay
@@ -195,6 +259,9 @@ Per decision D4.2: Conventional keybindings.
 | Key | Action |
 |-----|--------|
 | `Esc` | Return to overview |
+| `1` | Show Statistics panel |
+| `2` | Show Charts panel |
+| `3` | Show Pore Activity panel |
 | `p` | Pause acquisition |
 | `r` | Resume acquisition |
 | `s` | Stop acquisition (with confirmation) |

@@ -38,7 +38,7 @@ Development environment ready:
 - Client library working: `termion list`, `termion status`
 - TUI implemented with charts, status indicators, and auto-reconnect
 - CLI commands with proper exit codes (0, 1, 2, 3, 4)
-- 65 unit tests passing
+- 72 unit tests passing
 - CI pipeline configured (GitHub Actions)
 
 Next action: Phase 5 — Release (packaging, README, crates.io).
@@ -189,7 +189,7 @@ Next action: Phase 5 — Release (packaging, README, crates.io).
 **Purpose:** Ensure reliability and code quality.
 
 ### Deliverables
-- Unit tests for core logic (65 tests) ✅
+- Unit tests for core logic (72 tests) ✅
 - ~~Integration tests with mock gRPC server~~ → Deferred (TLS complexity)
 - CI pipeline (format, lint, test on every PR) ✅
 - Manual TUI visual QA checklist ✅

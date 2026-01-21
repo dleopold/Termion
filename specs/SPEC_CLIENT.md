@@ -125,6 +125,31 @@ impl StatisticsClient {
 }
 ```
 
+### Device Service (per-position)
+
+```rust
+impl DeviceClient {
+    /// Get physical channel layout for the flow cell
+    /// 
+    /// Returns normalized coordinates mapping channel numbers to grid positions.
+    /// Physical coordinates are sparse (e.g., MinION Y values: 10,13,18,21...)
+    /// and are normalized to consecutive indices (0-15 for rows).
+    pub async fn get_channel_layout(&self) -> Result<ChannelLayout>;
+}
+```
+
+### Data Service (per-position)
+
+```rust
+impl DataClient {
+    /// Get current channel states for all pores
+    /// 
+    /// Note: This is a streaming RPC. Take only the first response
+    /// to avoid blocking indefinitely.
+    pub async fn get_channel_states(&self) -> Result<ChannelStatesSnapshot>;
+}
+```
+
 ---
 
 ## Domain Types
@@ -161,6 +186,33 @@ pub struct StatsSnapshot {
     pub bases_called: u64,
     pub throughput_bps: f64,
     // ... additional fields per MinKNOW stats
+}
+
+/// Physical channel layout for the flow cell
+/// 
+/// Coordinates are normalized from sparse physical values to consecutive indices.
+/// For example, MinION has 512 channels arranged in a 32×16 grid, but the
+/// physical Y coordinates are sparse (10,13,18,21...). This struct provides
+/// normalized 0-based consecutive coordinates for display purposes.
+pub struct ChannelLayout {
+    /// Total number of channels
+    pub channel_count: u32,
+    
+    /// Grid width (number of columns)
+    pub width: u32,
+    
+    /// Grid height (number of rows)  
+    pub height: u32,
+    
+    /// Normalized (col, row) coordinates indexed by channel number (1-based)
+    /// coords[channel_number - 1] = (col, row)
+    pub coords: Vec<(u32, u32)>,
+}
+
+/// Snapshot of channel states for all pores
+pub struct ChannelStatesSnapshot {
+    /// Map of channel number to current state name
+    pub states: HashMap<u32, String>,
 }
 ```
 
