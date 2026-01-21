@@ -166,6 +166,49 @@ impl Config {
 
         Ok(())
     }
+
+    /// Save theme preference to the config file, preserving other settings.
+    pub fn save_theme(theme_name: &str) -> Result<(), ConfigError> {
+        let path = config_path();
+
+        let mut file_config: FileConfig = if path.exists() {
+            let content = std::fs::read_to_string(&path).map_err(|e| ConfigError::Read {
+                path: path.clone(),
+                source: e,
+            })?;
+            toml::from_str(&content).map_err(|e| ConfigError::Parse {
+                path: path.clone(),
+                source: e,
+            })?
+        } else {
+            FileConfig::default()
+        };
+
+        file_config
+            .tui
+            .get_or_insert_with(FileTuiConfig::default)
+            .theme = Some(theme_name.to_string());
+
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| ConfigError::Write {
+                path: path.clone(),
+                source: e,
+            })?;
+        }
+
+        let content = toml::to_string_pretty(&file_config)?;
+        std::fs::write(&path, content).map_err(|e| ConfigError::Write { path, source: e })?;
+
+        Ok(())
+    }
+}
+
+fn config_path() -> PathBuf {
+    std::env::var("TERMION_CONFIG")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(|| dirs::config_dir().map(|d| d.join("termion/config.toml")))
+        .unwrap_or_else(|| PathBuf::from("config.toml"))
 }
 
 fn expand_tilde(path: &str) -> PathBuf {

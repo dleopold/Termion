@@ -74,6 +74,9 @@ pub enum Overlay {
         action: RunControlAction,
         position_name: String,
     },
+    ThemeSelector {
+        selected: usize,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -214,6 +217,45 @@ impl App {
             Overlay::Help => Overlay::None,
             _ => Overlay::Help,
         };
+    }
+
+    pub fn open_theme_selector(&mut self) {
+        let current_idx = Theme::available_themes()
+            .iter()
+            .position(|&name| Theme::by_name(name).map(|t| t.name) == Some(self.theme.name))
+            .unwrap_or(0);
+        self.overlay = Overlay::ThemeSelector {
+            selected: current_idx,
+        };
+    }
+
+    pub fn theme_selector_up(&mut self) {
+        if let Overlay::ThemeSelector { selected } = &mut self.overlay {
+            let count = Theme::available_themes().len();
+            *selected = selected.checked_sub(1).unwrap_or(count - 1);
+        }
+    }
+
+    pub fn theme_selector_down(&mut self) {
+        if let Overlay::ThemeSelector { selected } = &mut self.overlay {
+            let count = Theme::available_themes().len();
+            *selected = (*selected + 1) % count;
+        }
+    }
+
+    pub fn apply_selected_theme(&mut self) {
+        if let Overlay::ThemeSelector { selected } = &self.overlay {
+            let themes = Theme::available_themes();
+            if let Some(&name) = themes.get(*selected) {
+                if let Some(theme) = Theme::by_name(name) {
+                    self.theme = theme;
+                    if let Err(e) = Config::save_theme(name) {
+                        tracing::warn!(error = %e, "Failed to save theme preference");
+                    }
+                }
+            }
+            self.overlay = Overlay::None;
+        }
     }
 
     pub fn quit(&mut self) {

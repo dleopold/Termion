@@ -70,6 +70,7 @@ pub enum Action {
     CycleChart,
     HistogramSetRange,
     HistogramResetRange,
+    ThemeSelector,
     None,
 }
 
@@ -95,6 +96,7 @@ impl From<KeyEvent> for Action {
             KeyCode::Tab => Action::CycleChart,
             KeyCode::Char('z') => Action::HistogramSetRange,
             KeyCode::Char('0') => Action::HistogramResetRange,
+            KeyCode::Char('T') => Action::ThemeSelector,
             _ => Action::None,
         }
     }

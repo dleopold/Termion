@@ -1,6 +1,6 @@
 //! Configuration types.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
 use thiserror::Error;
@@ -151,7 +151,7 @@ impl From<LogLevel> for tracing::Level {
 
 // --- File config (for TOML parsing) ---
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default)]
 pub struct FileConfig {
     pub connection: Option<FileConnectionConfig>,
     pub tui: Option<FileTuiConfig>,
@@ -159,7 +159,7 @@ pub struct FileConfig {
     pub logging: Option<FileLoggingConfig>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default)]
 pub struct FileConnectionConfig {
     pub host: Option<String>,
     pub port: Option<u16>,
@@ -167,21 +167,21 @@ pub struct FileConnectionConfig {
     pub request_timeout: Option<u64>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default)]
 pub struct FileTuiConfig {
     pub refresh_interval: Option<u64>,
     pub chart_history: Option<u64>,
     pub theme: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default)]
 pub struct FileReconnectConfig {
     pub initial_delay: Option<u64>,
     pub max_delay: Option<u64>,
     pub multiplier: Option<f64>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default)]
 pub struct FileLoggingConfig {
     pub level: Option<String>,
     pub file: Option<String>,
@@ -197,11 +197,20 @@ pub enum ConfigError {
         source: std::io::Error,
     },
 
+    #[error("Failed to write config file {}: {}", path.display(), source)]
+    Write {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
     #[error("Failed to parse config file {}: {}", path.display(), source)]
     Parse {
         path: PathBuf,
         source: toml::de::Error,
     },
+
+    #[error("Failed to serialize config: {}", .0)]
+    Serialize(#[from] toml::ser::Error),
 
     #[error("Invalid port: must be non-zero")]
     InvalidPort,

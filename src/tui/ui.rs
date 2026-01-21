@@ -53,6 +53,11 @@ pub fn render(frame: &mut Frame, app: &App) {
                 render_confirmation_overlay(frame, t, *action, position_name, confirm_area);
             }
         }
+        Overlay::ThemeSelector { selected } => {
+            if let Some(theme_area) = centered_fixed_rect(28, 15, area) {
+                render_theme_selector(frame, t, *selected, theme_area);
+            }
+        }
         Overlay::None => {}
     }
 }
@@ -123,6 +128,7 @@ fn render_position_table(frame: &mut Frame, app: &App, area: Rect) {
         .enumerate()
         .map(|(idx, pos)| {
             let stats = app.stats_cache.get(&pos.name);
+            let has_run_data = stats.map(|s| s.reads_processed > 0).unwrap_or(false);
 
             let run_state = app.run_states.get(&pos.name);
             let state_indicator = match run_state {
@@ -133,8 +139,9 @@ fn render_position_table(frame: &mut Frame, app: &App, area: Rect) {
                 Some(RunState::Finishing) => "◑ Finishing",
                 Some(RunState::Stopped) => "○ Stopped",
                 Some(RunState::Error(_)) => "✖ Error",
+                Some(RunState::Idle) if has_run_data => "○ Stopped",
                 Some(RunState::Idle) | None => match pos.state {
-                    PositionState::Running => "● Running",
+                    PositionState::Running => "○ Idle",
                     PositionState::Idle => "○ Idle",
                     PositionState::Error => "✖ Error",
                     _ => "? Unknown",
@@ -149,9 +156,12 @@ fn render_position_table(frame: &mut Frame, app: &App, area: Rect) {
                 .map(|s| format_bytes(s.bases_called))
                 .unwrap_or_else(|| "--".to_string());
 
-            let throughput = stats
-                .map(|s| format_throughput_gbph(s.throughput_gbph))
-                .unwrap_or_else(|| "--".to_string());
+            let throughput = match run_state {
+                Some(RunState::Running) => stats
+                    .map(|s| format_throughput_gbph(s.throughput_gbph))
+                    .unwrap_or_else(|| "--".to_string()),
+                _ => "--".to_string(),
+            };
 
             let run_id = stats
                 .map(|_| pos.name.clone())
@@ -260,9 +270,10 @@ fn render_position_detail(frame: &mut Frame, app: &App, position_idx: usize, are
         .split(area);
 
     let run_state = app.get_run_state(&position.name);
-    render_detail_header(frame, t, position, run_state, chunks[0]);
+    let has_run_data = stats.map(|s| s.reads_processed > 0).unwrap_or(false);
+    render_detail_header(frame, t, position, run_state, has_run_data, chunks[0]);
     let histogram = app.histograms.get(&position.name);
-    render_run_info(frame, t, position, stats, histogram, chunks[1]);
+    render_run_info(frame, t, position, stats, histogram, run_state, chunks[1]);
 
     match app.detail_chart {
         DetailChart::Yield => render_yield_chart(frame, app, &position.name, chunks[2]),
@@ -292,6 +303,7 @@ fn render_detail_header(
     t: &Theme,
     position: &Position,
     run_state: Option<&RunState>,
+    has_run_data: bool,
     area: Rect,
 ) {
     let (state_color, state_indicator) = match run_state {
@@ -302,8 +314,9 @@ fn render_detail_header(
         Some(RunState::Finishing) => (t.warning, "◑ Finishing"),
         Some(RunState::Stopped) => (t.idle, "○ Stopped"),
         Some(RunState::Error(_)) => (t.error, "✖ Error"),
+        Some(RunState::Idle) if has_run_data => (t.idle, "○ Stopped"),
         Some(RunState::Idle) | None => match position.state {
-            PositionState::Running => (t.success, "● Running"),
+            PositionState::Running => (t.idle, "○ Idle"),
             PositionState::Idle => (t.idle, "○ Idle"),
             PositionState::Error => (t.error, "✖ Error"),
             _ => (t.text, "? Unknown"),
@@ -334,6 +347,7 @@ fn render_run_info(
     _position: &Position,
     stats: Option<&StatsSnapshot>,
     histogram: Option<&ReadLengthHistogram>,
+    run_state: Option<&RunState>,
     area: Rect,
 ) {
     let n50_text = histogram
@@ -382,7 +396,10 @@ fn render_run_info(
             Line::from(vec![
                 Span::styled("Throughput: ", Style::default().fg(t.text_dim)),
                 Span::styled(
-                    format_throughput_gbph(s.throughput_gbph),
+                    match run_state {
+                        Some(RunState::Running) => format_throughput_gbph(s.throughput_gbph),
+                        _ => "--".to_string(),
+                    },
                     Style::default().bold(),
                 ),
                 Span::raw("    "),
@@ -391,7 +408,10 @@ fn render_run_info(
                 Span::raw("    "),
                 Span::styled("Active Pores: ", Style::default().fg(t.text_dim)),
                 Span::styled(
-                    format_number(s.active_pores as u64),
+                    match run_state {
+                        Some(RunState::Running) => format_number(s.active_pores as u64),
+                        _ => "--".to_string(),
+                    },
                     Style::default().bold(),
                 ),
                 Span::raw("    "),
@@ -1021,7 +1041,9 @@ fn render_help_overlay(frame: &mut Frame, t: &Theme, area: Rect) {
         Line::from(vec![Span::styled("───────────────────────", dim_style)]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("  ? ", key_style),
+            Span::styled("  T ", key_style),
+            Span::styled("Theme", desc_style),
+            Span::styled("   ? ", key_style),
             Span::styled("Help", desc_style),
             Span::styled("   q ", key_style),
             Span::styled("Quit", desc_style),
@@ -1150,6 +1172,68 @@ fn render_confirmation_overlay(
     frame.render_widget(dialog, area);
 }
 
+fn render_theme_selector(frame: &mut Frame, t: &Theme, selected: usize, area: Rect) {
+    use super::theme::Theme as ThemeType;
+
+    let themes = ThemeType::available_themes();
+    let mut lines: Vec<Line> = vec![
+        Line::from(Span::styled(
+            "Select Theme",
+            Style::default().bold().fg(t.text_title),
+        )),
+        Line::from(""),
+    ];
+
+    for (idx, &name) in themes.iter().enumerate() {
+        let display_name = match name {
+            "default" => "Default",
+            "catppuccin" => "Catppuccin Mocha",
+            "dracula" => "Dracula",
+            "tokyo-night" => "Tokyo Night",
+            "gruvbox" => "Gruvbox",
+            "nord" => "Nord",
+            "neon" => "Neon",
+            other => other,
+        };
+
+        let is_selected = idx == selected;
+        let prefix = if is_selected { "► " } else { "  " };
+        let style = if is_selected {
+            Style::default().fg(t.text).bold()
+        } else {
+            Style::default().fg(t.text_dim)
+        };
+
+        lines.push(Line::from(Span::styled(
+            format!("{}{}", prefix, display_name),
+            style,
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("[↑↓] ", Style::default().fg(t.key_hint).bold()),
+        Span::styled("Select", Style::default().fg(t.text_dim)),
+        Span::raw("  "),
+        Span::styled("[Enter] ", Style::default().fg(t.key_hint).bold()),
+        Span::styled("Apply", Style::default().fg(t.text_dim)),
+        Span::raw("  "),
+        Span::styled("[Esc] ", Style::default().fg(t.text_dim).bold()),
+        Span::styled("Cancel", Style::default().fg(t.text_dim)),
+    ]));
+
+    let dialog = Paragraph::new(lines).alignment(Alignment::Center).block(
+        Block::default()
+            .title(" Theme ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(t.border))
+            .style(Style::default().bg(t.background)),
+    );
+
+    frame.render_widget(ratatui::widgets::Clear, area);
+    frame.render_widget(dialog, area);
+}
+
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Option<Rect> {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
@@ -1170,6 +1254,17 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Option<Rect> {
         .split(popup_layout[1]);
 
     Some(popup_area[1])
+}
+
+fn centered_fixed_rect(width: u16, height: u16, area: Rect) -> Option<Rect> {
+    if area.width < width || area.height < height {
+        return None;
+    }
+
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+
+    Some(Rect::new(x, y, width, height))
 }
 
 fn format_number(n: u64) -> String {
