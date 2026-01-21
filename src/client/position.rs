@@ -14,6 +14,10 @@ use crate::proto::minknow_api::data::{
 use crate::proto::minknow_api::device::{
     device_service_client::DeviceServiceClient, GetChannelsLayoutRequest,
 };
+use crate::proto::minknow_api::protocol::{
+    protocol_service_client::ProtocolServiceClient, GetCurrentProtocolRunRequest,
+    PauseProtocolRequest, ProtocolPhase, ResumeProtocolRequest, StopProtocolRequest,
+};
 use crate::proto::minknow_api::statistics::{
     statistics_service_client::StatisticsServiceClient, stream_boxplot_request, DataSelection,
     ReadLengthType, StreamAcquisitionOutputRequest, StreamBoxplotRequest, StreamDutyTimeRequest,
@@ -54,6 +58,7 @@ pub struct PositionClient {
     statistics: StatisticsServiceClient<InterceptedChannel>,
     data: DataServiceClient<InterceptedChannel>,
     device: DeviceServiceClient<InterceptedChannel>,
+    protocol: ProtocolServiceClient<InterceptedChannel>,
 }
 
 impl PositionClient {
@@ -111,7 +116,8 @@ impl PositionClient {
         let statistics =
             StatisticsServiceClient::with_interceptor(channel.clone(), interceptor.clone());
         let data = DataServiceClient::with_interceptor(channel.clone(), interceptor.clone());
-        let device = DeviceServiceClient::with_interceptor(channel, interceptor);
+        let device = DeviceServiceClient::with_interceptor(channel.clone(), interceptor.clone());
+        let protocol = ProtocolServiceClient::with_interceptor(channel, interceptor);
 
         tracing::info!(position = %position.name, "Connected to position services");
         Ok(Self {
@@ -120,6 +126,7 @@ impl PositionClient {
             statistics,
             data,
             device,
+            protocol,
         })
     }
 
@@ -134,7 +141,7 @@ impl PositionClient {
             })?
             .into_inner();
 
-        let state = match MinknowStatus::try_from(response.status) {
+        let acq_state = match MinknowStatus::try_from(response.status) {
             Ok(MinknowStatus::Ready) => RunState::Idle,
             Ok(MinknowStatus::Starting) => RunState::Starting,
             Ok(MinknowStatus::Processing) => RunState::Running,
@@ -143,7 +150,44 @@ impl PositionClient {
             Err(_) => RunState::Idle,
         };
 
-        Ok(state)
+        // When processing, check protocol phase for more detail (mux scan, paused, etc.)
+        if matches!(acq_state, RunState::Running) {
+            if let Some(phase_state) = self.get_protocol_phase_state().await {
+                return Ok(phase_state);
+            }
+        }
+
+        Ok(acq_state)
+    }
+
+    async fn get_protocol_phase_state(&mut self) -> Option<RunState> {
+        let response = self
+            .protocol
+            .get_current_protocol_run(GetCurrentProtocolRunRequest {})
+            .await
+            .ok()?
+            .into_inner();
+
+        let phase = ProtocolPhase::try_from(response.phase).ok()?;
+
+        match phase {
+            ProtocolPhase::PhasePreparingForMuxScan | ProtocolPhase::PhaseMuxScan => {
+                Some(RunState::MuxScanning)
+            }
+            ProtocolPhase::PhasePaused
+            | ProtocolPhase::PhasePausing
+            | ProtocolPhase::PhaseBadTemperatureAutomaticPause
+            | ProtocolPhase::PhaseFlowcellDisconnectAutomaticPause
+            | ProtocolPhase::PhaseFlowcellMismatchAutomaticPause
+            | ProtocolPhase::PhaseDeviceErrorAutomaticPause
+            | ProtocolPhase::PhaseLowDiskSpaceAutomaticPause => Some(RunState::Paused),
+            ProtocolPhase::PhaseResuming | ProtocolPhase::PhaseInitialising => {
+                Some(RunState::Starting)
+            }
+            ProtocolPhase::PhaseSequencing => Some(RunState::Running),
+            ProtocolPhase::PhaseCompleted => Some(RunState::Finishing),
+            ProtocolPhase::PhaseUnknown => None,
+        }
     }
 
     pub async fn get_acquisition_info(&mut self) -> Result<AcquisitionInfo, ClientError> {
@@ -208,12 +252,55 @@ impl PositionClient {
         })
     }
 
+    /// Stops the current acquisition.
     pub async fn stop(&mut self) -> Result<(), ClientError> {
         self.acquisition
             .stop(StopRequest::default())
             .await
             .map_err(|status| ClientError::Grpc {
                 method: "stop".into(),
+                status,
+            })?;
+        Ok(())
+    }
+
+    /// Pauses the current protocol.
+    ///
+    /// This will only succeed if the protocol supports pausing (can_pause = true).
+    pub async fn pause(&mut self) -> Result<(), ClientError> {
+        self.protocol
+            .pause_protocol(PauseProtocolRequest::default())
+            .await
+            .map_err(|status| ClientError::Grpc {
+                method: "pause_protocol".into(),
+                status,
+            })?;
+        Ok(())
+    }
+
+    /// Resumes a paused protocol.
+    ///
+    /// This will only succeed if the protocol is currently paused.
+    pub async fn resume(&mut self) -> Result<(), ClientError> {
+        self.protocol
+            .resume_protocol(ResumeProtocolRequest::default())
+            .await
+            .map_err(|status| ClientError::Grpc {
+                method: "resume_protocol".into(),
+                status,
+            })?;
+        Ok(())
+    }
+
+    /// Stops the current protocol (not just acquisition).
+    ///
+    /// This stops the entire protocol run, not just the acquisition.
+    pub async fn stop_protocol(&mut self) -> Result<(), ClientError> {
+        self.protocol
+            .stop_protocol(StopProtocolRequest::default())
+            .await
+            .map_err(|status| ClientError::Grpc {
+                method: "stop_protocol".into(),
                 status,
             })?;
         Ok(())

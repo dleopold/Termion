@@ -7,7 +7,9 @@ mod app;
 mod event;
 mod ui;
 
-pub use app::{App, ChartBuffer, ConnectionState, DetailChart, Overlay, Screen, YieldUnit};
+pub use app::{
+    App, ChartBuffer, ConnectionState, DetailChart, Overlay, RunControlAction, Screen, YieldUnit,
+};
 pub use event::{Action, Event, EventHandler};
 
 use crate::client::Client;
@@ -83,8 +85,9 @@ async fn run_app(
         if let Some(event) = events.next().await {
             match event {
                 Event::Key(key) => {
+                    use crossterm::event::KeyCode;
+
                     if matches!(app.overlay, Overlay::RangeInput { .. }) {
-                        use crossterm::event::KeyCode;
                         match key.code {
                             KeyCode::Esc => {
                                 app.overlay = Overlay::None;
@@ -99,6 +102,18 @@ async fn run_app(
                             other => {
                                 app.handle_range_input_key(other);
                             }
+                        }
+                    } else if let Some((action, position_name)) = app.pending_confirmation() {
+                        match key.code {
+                            KeyCode::Esc => {
+                                app.clear_confirmation();
+                            }
+                            KeyCode::Enter => {
+                                app.clear_confirmation();
+                                execute_run_control(&mut app, &mut client, action, &position_name)
+                                    .await;
+                            }
+                            _ => {}
                         }
                     } else {
                         let action = Action::from(key);
@@ -218,8 +233,14 @@ async fn handle_action(
                 }
             }
         }
-        Action::Pause | Action::Resume | Action::Stop => {
-            // TODO: Implement run control actions
+        Action::Pause => {
+            app.request_run_control(RunControlAction::Pause);
+        }
+        Action::Resume => {
+            app.request_run_control(RunControlAction::Resume);
+        }
+        Action::Stop => {
+            app.request_run_control(RunControlAction::Stop);
         }
         Action::ToggleYieldUnit => app.toggle_yield_unit(),
         Action::ToggleOutliers => {
@@ -260,6 +281,10 @@ async fn refresh_data(app: &mut App, client: &mut Client) {
                 if let Ok(mut pos_client) = client.connect_position(pos.clone()).await {
                     if let Ok(stats) = pos_client.get_stats().await {
                         app.update_stats(&pos.name, stats);
+                    }
+
+                    if let Ok(run_state) = pos_client.get_run_state().await {
+                        app.update_run_state(&pos.name, run_state);
                     }
 
                     if in_detail_view && detail_position_idx == Some(idx) {
@@ -425,6 +450,57 @@ async fn fetch_detail_data(app: &mut App, pos_client: &mut crate::client::Positi
                 tracing::debug!(position = %position_name, error = %e.display_message(), "Channel layout failed");
             }
         }
+    }
+}
+
+async fn execute_run_control(
+    app: &mut App,
+    client: &mut Option<Client>,
+    action: RunControlAction,
+    position_name: &str,
+) {
+    let Some(ref mut c) = client else {
+        app.set_error("Not connected to MinKNOW".to_string());
+        return;
+    };
+
+    let position = match app.positions.iter().find(|p| p.name == position_name) {
+        Some(p) => p.clone(),
+        None => {
+            app.set_error(format!("Position {} not found", position_name));
+            return;
+        }
+    };
+
+    let mut pos_client = match c.connect_position(position).await {
+        Ok(pc) => pc,
+        Err(e) => {
+            app.set_error(format!(
+                "Failed to connect to position: {}",
+                e.display_message()
+            ));
+            return;
+        }
+    };
+
+    let result = match action {
+        RunControlAction::Pause => pos_client.pause().await,
+        RunControlAction::Resume => pos_client.resume().await,
+        RunControlAction::Stop => pos_client.stop_protocol().await,
+    };
+
+    if let Err(e) = result {
+        app.set_error(format!(
+            "Failed to {} run: {}",
+            action.label().to_lowercase(),
+            e.display_message()
+        ));
+    } else {
+        tracing::info!(
+            action = action.label(),
+            position = position_name,
+            "Run control action executed"
+        );
     }
 }
 

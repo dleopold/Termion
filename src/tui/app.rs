@@ -2,7 +2,7 @@
 
 use crate::client::{
     ChannelLayout, ChannelStatesSnapshot, DutyTimeSnapshot, Position, ReadLengthHistogram,
-    StatsSnapshot, YieldDataPoint,
+    RunState, StatsSnapshot, YieldDataPoint,
 };
 use crate::config::Config;
 use std::collections::HashMap;
@@ -34,12 +34,45 @@ pub enum YieldUnit {
     Reads,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunControlAction {
+    Pause,
+    Resume,
+    Stop,
+}
+
+impl RunControlAction {
+    pub fn label(&self) -> &'static str {
+        match self {
+            RunControlAction::Pause => "Pause",
+            RunControlAction::Resume => "Resume",
+            RunControlAction::Stop => "Stop",
+        }
+    }
+
+    pub fn confirmation_message(&self) -> &'static str {
+        match self {
+            RunControlAction::Pause => "Pause the current run?",
+            RunControlAction::Resume => "Resume the paused run?",
+            RunControlAction::Stop => "Stop the current run? This cannot be undone.",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Overlay {
     None,
     Help,
-    Error { message: String },
-    RangeInput { max_input: String },
+    Error {
+        message: String,
+    },
+    RangeInput {
+        max_input: String,
+    },
+    Confirmation {
+        action: RunControlAction,
+        position_name: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +91,7 @@ pub struct App {
     pub positions: Vec<Position>,
     pub selected_position: usize,
     pub stats_cache: HashMap<String, StatsSnapshot>,
+    pub run_states: HashMap<String, RunState>,
     pub chart_data: HashMap<String, ChartBuffer>,
     pub should_quit: bool,
     pub last_error: Option<String>,
@@ -109,6 +143,7 @@ impl App {
             positions: Vec::new(),
             selected_position: 0,
             stats_cache: HashMap::new(),
+            run_states: HashMap::new(),
             chart_data: HashMap::new(),
             should_quit: false,
             last_error: None,
@@ -209,18 +244,15 @@ impl App {
     }
 
     pub fn update_stats(&mut self, position_name: &str, stats: StatsSnapshot) {
-        let chart = self
-            .chart_data
-            .entry(position_name.to_string())
-            .or_insert_with(|| ChartBuffer::new(1800));
-
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs_f64();
-
-        chart.push(now, stats.throughput_gbph);
         self.stats_cache.insert(position_name.to_string(), stats);
+    }
+
+    pub fn update_run_state(&mut self, position_name: &str, state: RunState) {
+        self.run_states.insert(position_name.to_string(), state);
+    }
+
+    pub fn get_run_state(&self, position_name: &str) -> Option<&RunState> {
+        self.run_states.get(position_name)
     }
 
     pub fn selected_position(&self) -> Option<&Position> {
@@ -282,6 +314,47 @@ impl App {
         };
 
         self.overlay = Overlay::RangeInput { max_input: max_str };
+    }
+
+    pub fn request_run_control(&mut self, action: RunControlAction) {
+        let Some(pos) = self.selected_position() else {
+            return;
+        };
+
+        let run_state = self.run_states.get(&pos.name);
+
+        let is_valid = match action {
+            RunControlAction::Pause => matches!(run_state, Some(RunState::Running)),
+            RunControlAction::Resume => matches!(run_state, Some(RunState::Paused)),
+            RunControlAction::Stop => {
+                matches!(run_state, Some(RunState::Running | RunState::MuxScanning))
+            }
+        };
+
+        if is_valid {
+            self.overlay = Overlay::Confirmation {
+                action,
+                position_name: pos.name.clone(),
+            };
+        }
+    }
+
+    pub fn pending_confirmation(&self) -> Option<(RunControlAction, String)> {
+        if let Overlay::Confirmation {
+            action,
+            position_name,
+        } = &self.overlay
+        {
+            Some((*action, position_name.clone()))
+        } else {
+            None
+        }
+    }
+
+    pub fn clear_confirmation(&mut self) {
+        if matches!(self.overlay, Overlay::Confirmation { .. }) {
+            self.overlay = Overlay::None;
+        }
     }
 
     pub fn apply_range_input(&mut self) -> bool {

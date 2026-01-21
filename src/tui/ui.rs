@@ -1,8 +1,8 @@
 //! UI rendering functions.
 
-use super::app::{App, ConnectionState, DetailChart, Overlay, Screen, YieldUnit};
+use super::app::{App, ConnectionState, DetailChart, Overlay, RunControlAction, Screen, YieldUnit};
 use crate::client::{
-    ChannelLayout, ChannelStatesSnapshot, Position, PositionState, ReadLengthHistogram,
+    ChannelLayout, ChannelStatesSnapshot, Position, PositionState, ReadLengthHistogram, RunState,
     StatsSnapshot,
 };
 use ratatui::{
@@ -41,6 +41,14 @@ pub fn render(frame: &mut Frame, app: &App) {
         Overlay::RangeInput { max_input } => {
             if let Some(range_area) = centered_rect(35, 18, area) {
                 render_range_input_overlay(frame, max_input, range_area);
+            }
+        }
+        Overlay::Confirmation {
+            action,
+            position_name,
+        } => {
+            if let Some(confirm_area) = centered_rect(45, 22, area) {
+                render_confirmation_overlay(frame, *action, position_name, confirm_area);
             }
         }
         Overlay::None => {}
@@ -114,11 +122,21 @@ fn render_position_table(frame: &mut Frame, app: &App, area: Rect) {
         .map(|(idx, pos)| {
             let stats = app.stats_cache.get(&pos.name);
 
-            let state_indicator = match pos.state {
-                PositionState::Running => "● Running",
-                PositionState::Idle => "○ Idle",
-                PositionState::Error => "✖ Error",
-                _ => "? Unknown",
+            let run_state = app.run_states.get(&pos.name);
+            let state_indicator = match run_state {
+                Some(RunState::Running) => "● Running",
+                Some(RunState::MuxScanning) => "◉ Pore Scan",
+                Some(RunState::Paused) => "⏸ Paused",
+                Some(RunState::Starting) => "◐ Starting",
+                Some(RunState::Finishing) => "◑ Finishing",
+                Some(RunState::Stopped) => "○ Stopped",
+                Some(RunState::Error(_)) => "✖ Error",
+                Some(RunState::Idle) | None => match pos.state {
+                    PositionState::Running => "● Running",
+                    PositionState::Idle => "○ Idle",
+                    PositionState::Error => "✖ Error",
+                    _ => "? Unknown",
+                },
             };
 
             let reads = stats
@@ -236,7 +254,8 @@ fn render_position_detail(frame: &mut Frame, app: &App, position_idx: usize, are
         ])
         .split(area);
 
-    render_detail_header(frame, position, chunks[0]);
+    let run_state = app.get_run_state(&position.name);
+    render_detail_header(frame, position, run_state, chunks[0]);
     let histogram = app.histograms.get(&position.name);
     render_run_info(frame, position, stats, histogram, chunks[1]);
 
@@ -262,19 +281,26 @@ fn render_position_detail(frame: &mut Frame, app: &App, position_idx: usize, are
     render_detail_footer(frame, app, chunks[3]);
 }
 
-fn render_detail_header(frame: &mut Frame, position: &Position, area: Rect) {
-    let state_color = match position.state {
-        PositionState::Running => Color::Green,
-        PositionState::Idle => Color::DarkGray,
-        PositionState::Error => Color::Red,
-        _ => Color::White,
-    };
-
-    let state_text = match position.state {
-        PositionState::Running => "Running",
-        PositionState::Idle => "Idle",
-        PositionState::Error => "Error",
-        _ => "Unknown",
+fn render_detail_header(
+    frame: &mut Frame,
+    position: &Position,
+    run_state: Option<&RunState>,
+    area: Rect,
+) {
+    let (state_color, state_text) = match run_state {
+        Some(RunState::Running) => (Color::Green, "Running"),
+        Some(RunState::MuxScanning) => (Color::Magenta, "Pore Scan"),
+        Some(RunState::Paused) => (Color::Yellow, "Paused"),
+        Some(RunState::Starting) => (Color::Cyan, "Starting"),
+        Some(RunState::Finishing) => (Color::Yellow, "Finishing"),
+        Some(RunState::Stopped) => (Color::DarkGray, "Stopped"),
+        Some(RunState::Error(_)) => (Color::Red, "Error"),
+        Some(RunState::Idle) | None => match position.state {
+            PositionState::Running => (Color::Green, "Running"),
+            PositionState::Idle => (Color::DarkGray, "Idle"),
+            PositionState::Error => (Color::Red, "Error"),
+            _ => (Color::White, "Unknown"),
+        },
     };
 
     let title = Line::from(vec![
@@ -1062,6 +1088,52 @@ fn render_range_input_overlay(frame: &mut Frame, max_input: &str, area: Rect) {
             .title(" Range ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Magenta))
+            .style(Style::default().bg(Color::Black)),
+    );
+
+    frame.render_widget(ratatui::widgets::Clear, area);
+    frame.render_widget(dialog, area);
+}
+
+fn render_confirmation_overlay(
+    frame: &mut Frame,
+    action: RunControlAction,
+    position_name: &str,
+    area: Rect,
+) {
+    let (title_color, border_color) = match action {
+        RunControlAction::Stop => (Color::Red, Color::Red),
+        RunControlAction::Pause => (Color::Yellow, Color::Yellow),
+        RunControlAction::Resume => (Color::Green, Color::Green),
+    };
+
+    let content = vec![
+        Line::from(Span::styled(
+            format!("{} Run", action.label()),
+            Style::default().bold().fg(title_color),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("Position: {}", position_name),
+            Style::default().fg(Color::Cyan),
+        )),
+        Line::from(""),
+        Line::from(action.confirmation_message()),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("[Enter] ", Style::default().fg(Color::Yellow).bold()),
+            Span::styled("Confirm", Style::default()),
+            Span::raw("    "),
+            Span::styled("[Esc] ", Style::default().fg(Color::DarkGray).bold()),
+            Span::styled("Cancel", Style::default().fg(Color::DarkGray)),
+        ]),
+    ];
+
+    let dialog = Paragraph::new(content).alignment(Alignment::Center).block(
+        Block::default()
+            .title(format!(" {} ", action.label()))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(border_color))
             .style(Style::default().bg(Color::Black)),
     );
 

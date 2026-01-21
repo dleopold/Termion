@@ -123,6 +123,9 @@ pub enum RunState {
     /// Acquisition is actively running.
     Running,
 
+    /// Performing a mux scan (pore scan).
+    MuxScanning,
+
     /// Acquisition is paused.
     Paused,
 
@@ -141,7 +144,11 @@ impl RunState {
     pub fn is_active(&self) -> bool {
         matches!(
             self,
-            RunState::Starting | RunState::Running | RunState::Paused | RunState::Finishing
+            RunState::Starting
+                | RunState::Running
+                | RunState::MuxScanning
+                | RunState::Paused
+                | RunState::Finishing
         )
     }
 
@@ -151,6 +158,7 @@ impl RunState {
             RunState::Idle => "Idle",
             RunState::Starting => "Starting",
             RunState::Running => "Running",
+            RunState::MuxScanning => "Pore Scan",
             RunState::Paused => "Paused",
             RunState::Finishing => "Finishing",
             RunState::Stopped => "Stopped",
@@ -486,6 +494,7 @@ mod tests {
         assert!(!RunState::Idle.is_active());
         assert!(RunState::Starting.is_active());
         assert!(RunState::Running.is_active());
+        assert!(RunState::MuxScanning.is_active());
         assert!(RunState::Paused.is_active());
         assert!(RunState::Finishing.is_active());
         assert!(!RunState::Stopped.is_active());
@@ -497,6 +506,7 @@ mod tests {
         assert_eq!(RunState::Idle.label(), "Idle");
         assert_eq!(RunState::Starting.label(), "Starting");
         assert_eq!(RunState::Running.label(), "Running");
+        assert_eq!(RunState::MuxScanning.label(), "Pore Scan");
         assert_eq!(RunState::Paused.label(), "Paused");
         assert_eq!(RunState::Finishing.label(), "Finishing");
         assert_eq!(RunState::Stopped.label(), "Stopped");
