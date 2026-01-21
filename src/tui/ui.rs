@@ -287,19 +287,19 @@ fn render_detail_header(
     run_state: Option<&RunState>,
     area: Rect,
 ) {
-    let (state_color, state_text) = match run_state {
-        Some(RunState::Running) => (Color::Green, "Running"),
-        Some(RunState::MuxScanning) => (Color::Magenta, "Pore Scan"),
-        Some(RunState::Paused) => (Color::Yellow, "Paused"),
-        Some(RunState::Starting) => (Color::Cyan, "Starting"),
-        Some(RunState::Finishing) => (Color::Yellow, "Finishing"),
-        Some(RunState::Stopped) => (Color::DarkGray, "Stopped"),
-        Some(RunState::Error(_)) => (Color::Red, "Error"),
+    let (state_color, state_indicator) = match run_state {
+        Some(RunState::Running) => (Color::Green, "● Running"),
+        Some(RunState::MuxScanning) => (Color::Magenta, "◉ Pore Scan"),
+        Some(RunState::Paused) => (Color::Yellow, "⏸ Paused"),
+        Some(RunState::Starting) => (Color::Cyan, "◐ Starting"),
+        Some(RunState::Finishing) => (Color::Yellow, "◑ Finishing"),
+        Some(RunState::Stopped) => (Color::DarkGray, "○ Stopped"),
+        Some(RunState::Error(_)) => (Color::Red, "✖ Error"),
         Some(RunState::Idle) | None => match position.state {
-            PositionState::Running => (Color::Green, "Running"),
-            PositionState::Idle => (Color::DarkGray, "Idle"),
-            PositionState::Error => (Color::Red, "Error"),
-            _ => (Color::White, "Unknown"),
+            PositionState::Running => (Color::Green, "● Running"),
+            PositionState::Idle => (Color::DarkGray, "○ Idle"),
+            PositionState::Error => (Color::Red, "✖ Error"),
+            _ => (Color::White, "? Unknown"),
         },
     };
 
@@ -309,7 +309,7 @@ fn render_detail_header(
             Style::default().bold().fg(Color::Cyan),
         ),
         Span::raw("── "),
-        Span::styled(state_text, Style::default().fg(state_color).bold()),
+        Span::styled(state_indicator, Style::default().fg(state_color).bold()),
     ]);
 
     let header = Paragraph::new(title).block(
