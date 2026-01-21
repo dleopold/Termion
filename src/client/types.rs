@@ -183,6 +183,12 @@ pub struct StatsSnapshot {
     /// Number of reads failing filters.
     pub reads_failed: u64,
 
+    /// Number of bases passing filters.
+    pub bases_passed: u64,
+
+    /// Number of bases failing filters.
+    pub bases_failed: u64,
+
     /// Mean read quality score.
     pub mean_quality: f64,
 
@@ -210,10 +216,18 @@ impl StatsSnapshot {
 pub struct YieldDataPoint {
     /// Seconds since start of acquisition.
     pub seconds: u32,
-    /// Cumulative read count at this time.
+    /// Cumulative total read count at this time.
     pub reads: u64,
-    /// Cumulative bases at this time.
+    /// Cumulative total bases at this time.
     pub bases: u64,
+    /// Cumulative passed read count at this time.
+    pub reads_passed: u64,
+    /// Cumulative failed read count at this time.
+    pub reads_failed: u64,
+    /// Cumulative passed bases at this time.
+    pub bases_passed: u64,
+    /// Cumulative failed bases at this time.
+    pub bases_failed: u64,
 }
 
 /// Read length histogram data.
@@ -421,7 +435,9 @@ impl ChannelStatesSnapshot {
             .iter()
             .filter(|(name, _)| {
                 let n = name.to_lowercase();
-                n.contains("strand") || n.contains("sequencing") || n == "pore"
+                // Only "strand" states represent actively sequencing channels
+                // "pore" means an open pore NOT currently capturing DNA
+                n.contains("strand") || n.contains("sequencing")
             })
             .map(|(_, count)| count)
             .sum()
@@ -443,11 +459,20 @@ impl ChannelStatesSnapshot {
             .iter()
             .filter(|(name, _)| {
                 let n = name.to_lowercase();
-                n.contains("unavailable")
-                    || n.contains("saturated")
-                    || n.contains("zero")
-                    || n.contains("multiple")
-                    || n.contains("inactive")
+                // Unavailable: stalled strand or current too high
+                n.contains("unavailable") || n.contains("saturated")
+            })
+            .map(|(_, count)| count)
+            .sum()
+    }
+
+    pub fn inactive_count(&self) -> usize {
+        self.state_counts
+            .iter()
+            .filter(|(name, _)| {
+                let n = name.to_lowercase();
+                // Inactive: cannot be rescued (outside detector limit, multiple pores)
+                n.contains("inactive") || n.contains("zero") || n.contains("multiple")
             })
             .map(|(_, count)| count)
             .sum()

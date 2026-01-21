@@ -303,51 +303,67 @@ fn render_run_info(
         vec![
             Line::from(vec![
                 Span::styled("Reads: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(format_number(s.reads_processed), Style::default().bold()),
-                Span::raw("    "),
-                Span::styled("Bases: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(format_bytes(s.bases_called), Style::default().bold()),
-                Span::raw("    "),
-                Span::styled("Throughput: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
-                    format!("{:.2} Gb/h", s.throughput_gbph),
+                    format_number(s.reads_processed),
                     Style::default().bold().fg(Color::Cyan),
                 ),
-            ]),
-            Line::from(vec![
-                Span::styled("Passed: ", Style::default().fg(Color::DarkGray)),
+                Span::raw("  "),
                 Span::styled(
                     format_number(s.reads_passed),
                     Style::default().fg(Color::Green),
                 ),
-                Span::raw("    "),
-                Span::styled("Failed: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(" passed  ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     format_number(s.reads_failed),
                     Style::default().fg(Color::Red),
                 ),
+                Span::styled(" failed", Style::default().fg(Color::DarkGray)),
+            ]),
+            Line::from(vec![
+                Span::styled("Bases: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format_bytes(s.bases_called),
+                    Style::default().bold().fg(Color::Cyan),
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    format_bytes(s.bases_passed),
+                    Style::default().fg(Color::Green),
+                ),
+                Span::styled(" passed  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format_bytes(s.bases_failed),
+                    Style::default().fg(Color::Red),
+                ),
+                Span::styled(" failed", Style::default().fg(Color::DarkGray)),
+            ]),
+            Line::from(vec![
+                Span::styled("Throughput: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!("{:.2} Gb/h", s.throughput_gbph),
+                    Style::default().bold(),
+                ),
                 Span::raw("    "),
                 Span::styled("Pass Rate: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(format!("{:.1}%", s.pass_rate()), Style::default().bold()),
-            ]),
-            Line::from(vec![
+                Span::raw("    "),
                 Span::styled("Active Pores: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     format_number(s.active_pores as u64),
-                    Style::default().bold().fg(Color::Yellow),
+                    Style::default().bold(),
                 ),
                 Span::raw("    "),
-                Span::styled("Mean Quality: ", Style::default().fg(Color::DarkGray)),
+                Span::styled("Q: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     if s.mean_quality > 0.0 {
-                        format!("Q{:.1}", s.mean_quality)
+                        format!("{:.1}", s.mean_quality)
                     } else {
                         "--".to_string()
                     },
                     Style::default().bold(),
                 ),
                 Span::raw("    "),
-                Span::styled("Mean Length: ", Style::default().fg(Color::DarkGray)),
+                Span::styled("Len: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     if s.mean_read_length > 0.0 {
                         format_number(s.mean_read_length as u64)
@@ -374,66 +390,103 @@ fn render_run_info(
 
 fn render_yield_chart(frame: &mut Frame, app: &App, position_name: &str, area: Rect) {
     let yield_data = app.yield_history.get(position_name);
-    let chart_data = app.chart_data.get(position_name);
 
-    let (title, data): (&str, Vec<(f64, f64)>) = if let Some(yield_points) = yield_data {
-        if yield_points.is_empty() {
-            ("Cumulative Yield", Vec::new())
-        } else {
-            match app.yield_unit {
-                YieldUnit::Bases => {
-                    let points: Vec<(f64, f64)> = yield_points
-                        .iter()
-                        .map(|p| (p.seconds as f64, p.bases as f64 / 1_000_000_000.0))
-                        .collect();
-                    ("Cumulative Yield (Gb)", points)
-                }
-                YieldUnit::Reads => {
-                    let points: Vec<(f64, f64)> = yield_points
-                        .iter()
-                        .map(|p| (p.seconds as f64, p.reads as f64 / 1_000_000.0))
-                        .collect();
-                    ("Cumulative Yield (M reads)", points)
-                }
-            }
+    let yield_points = match yield_data {
+        Some(points) if !points.is_empty() => points,
+        _ => {
+            let placeholder = Paragraph::new("Waiting for data...")
+                .style(Style::default().fg(Color::DarkGray))
+                .alignment(Alignment::Center)
+                .block(
+                    Block::default()
+                        .title(" Cumulative Yield [1] ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Cyan)),
+                );
+            frame.render_widget(placeholder, area);
+            return;
         }
-    } else if let Some(c) = chart_data {
-        ("Throughput (Gb/h)", c.data.clone())
+    };
+
+    let (title, unit_label, scale_factor): (&str, &str, f64) = match app.yield_unit {
+        YieldUnit::Bases => ("Cumulative Yield (Gb)", "Gb", 1_000_000_000.0),
+        YieldUnit::Reads => ("Cumulative Yield (M reads)", "M", 1_000_000.0),
+    };
+
+    let min_x = yield_points
+        .first()
+        .map(|p| p.seconds as f64)
+        .unwrap_or(0.0);
+    let max_x = yield_points.last().map(|p| p.seconds as f64).unwrap_or(1.0);
+
+    type ValueFn = fn(&crate::client::YieldDataPoint) -> u64;
+    let (get_total, get_passed, get_failed): (ValueFn, ValueFn, ValueFn) = match app.yield_unit {
+        YieldUnit::Bases => (|p| p.bases, |p| p.bases_passed, |p| p.bases_failed),
+        YieldUnit::Reads => (|p| p.reads, |p| p.reads_passed, |p| p.reads_failed),
+    };
+
+    let total_data: Vec<(f64, f64)> = yield_points
+        .iter()
+        .map(|p| (p.seconds as f64 - min_x, get_total(p) as f64 / scale_factor))
+        .collect();
+    let passed_data: Vec<(f64, f64)> = yield_points
+        .iter()
+        .map(|p| {
+            (
+                p.seconds as f64 - min_x,
+                get_passed(p) as f64 / scale_factor,
+            )
+        })
+        .collect();
+    let failed_data: Vec<(f64, f64)> = yield_points
+        .iter()
+        .map(|p| {
+            (
+                p.seconds as f64 - min_x,
+                get_failed(p) as f64 / scale_factor,
+            )
+        })
+        .collect();
+
+    let all_y_values = total_data
+        .iter()
+        .chain(passed_data.iter())
+        .chain(failed_data.iter())
+        .map(|(_, y)| *y);
+
+    let data_min_y = all_y_values.clone().fold(f64::INFINITY, f64::min);
+    let data_max_y = all_y_values.fold(0.0f64, f64::max);
+
+    let y_range = data_max_y - data_min_y;
+    let y_padding = if y_range > 0.001 {
+        y_range * 0.1
     } else {
-        ("Cumulative Yield", Vec::new())
+        data_max_y * 0.1 + 0.001
     };
 
-    if data.is_empty() {
-        let placeholder = Paragraph::new("Waiting for data...")
-            .style(Style::default().fg(Color::DarkGray))
-            .alignment(Alignment::Center)
-            .block(
-                Block::default()
-                    .title(format!(" {} ", title))
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Cyan)),
-            );
-        frame.render_widget(placeholder, area);
-        return;
-    }
+    let min_y = (data_min_y - y_padding).max(0.0);
+    let max_y = data_max_y + y_padding;
 
-    let min_x = data.first().map(|(x, _)| *x).unwrap_or(0.0);
-    let max_x = data.last().map(|(x, _)| *x).unwrap_or(1.0);
-    let max_y = data.iter().map(|(_, y)| *y).fold(0.0f64, f64::max).max(0.1);
-
-    let normalized: Vec<(f64, f64)> = data.iter().map(|(x, y)| (x - min_x, *y)).collect();
-
-    let y_label = match app.yield_unit {
-        YieldUnit::Bases => "Gb",
-        YieldUnit::Reads => "M",
-    };
-
-    let datasets = vec![Dataset::default()
-        .name(y_label)
-        .marker(symbols::Marker::Braille)
-        .graph_type(GraphType::Line)
-        .style(Style::default().fg(Color::Cyan))
-        .data(&normalized)];
+    let datasets = vec![
+        Dataset::default()
+            .name(format!("Total ({})", unit_label))
+            .marker(symbols::Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(Color::Cyan))
+            .data(&total_data),
+        Dataset::default()
+            .name("Passed")
+            .marker(symbols::Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(Color::Green))
+            .data(&passed_data),
+        Dataset::default()
+            .name("Failed")
+            .marker(symbols::Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(Color::Red))
+            .data(&failed_data),
+    ];
 
     let time_label = format_time_label(max_x - min_x);
 
@@ -453,10 +506,10 @@ fn render_yield_chart(frame: &mut Frame, app: &App, position_name: &str, area: R
         .y_axis(
             Axis::default()
                 .style(Style::default().fg(Color::DarkGray))
-                .bounds([0.0, max_y * 1.1])
+                .bounds([min_y, max_y])
                 .labels(vec![
-                    Line::from("0"),
-                    Line::from(format!("{:.1}", max_y / 2.0)),
+                    Line::from(format!("{:.1}", min_y)),
+                    Line::from(format!("{:.1}", (min_y + max_y) / 2.0)),
                     Line::from(format!("{:.1}", max_y)),
                 ]),
         );
@@ -691,12 +744,14 @@ fn render_state_counts(frame: &mut Frame, channel_states: &ChannelStatesSnapshot
     let sequencing = channel_states.sequencing_count();
     let pore_available = channel_states.pore_available_count();
     let unavailable = channel_states.unavailable_count();
-    let other = total.saturating_sub(sequencing + pore_available + unavailable);
+    let inactive = channel_states.inactive_count();
+    let other = total.saturating_sub(sequencing + pore_available + unavailable + inactive);
 
     let categories = [
         ("Sequencing", sequencing, Color::Green),
         ("Pore Available", pore_available, Color::Blue),
-        ("Unavailable", unavailable, Color::Red),
+        ("Unavailable", unavailable, Color::Magenta),
+        ("Inactive", inactive, Color::Cyan),
         ("Other", other, Color::DarkGray),
     ];
 
@@ -741,10 +796,12 @@ fn state_to_symbol(state: &str) -> (&'static str, Color) {
         ("██", Color::Green)
     } else if s.contains("pore") || s.contains("single") {
         ("██", Color::Blue)
-    } else if s.contains("unavailable") || s.contains("saturated") || s.contains("multiple") {
-        ("░░", Color::Red)
+    } else if s.contains("unavailable") || s.contains("saturated") {
+        ("░░", Color::Magenta)
+    } else if s.contains("inactive") || s.contains("zero") || s.contains("multiple") {
+        ("░░", Color::Cyan)
     } else if s.contains("adapter") || s.contains("event") {
-        ("▓▓", Color::Cyan)
+        ("▓▓", Color::Yellow)
     } else if s.contains("unblock") {
         ("▒▒", Color::Yellow)
     } else if s.is_empty() || s == "unknown" {

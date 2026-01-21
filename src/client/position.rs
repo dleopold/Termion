@@ -200,6 +200,8 @@ impl PositionClient {
             throughput_gbph: 0.0,
             reads_passed: info.reads_passed,
             reads_failed: info.reads_failed,
+            bases_passed: info.bases_passed,
+            bases_failed: info.bases_failed,
             mean_quality: 0.0,
             mean_read_length,
             active_pores: 0,
@@ -273,9 +275,10 @@ impl PositionClient {
                                     yield_summary.basecalled_pass_read_count as u64;
                                 snapshot.reads_failed =
                                     yield_summary.basecalled_fail_read_count as u64;
-                                snapshot.bases_called = (yield_summary.basecalled_pass_bases
-                                    + yield_summary.basecalled_fail_bases)
-                                    as u64;
+                                snapshot.bases_passed = yield_summary.basecalled_pass_bases as u64;
+                                snapshot.bases_failed = yield_summary.basecalled_fail_bases as u64;
+                                snapshot.bases_called =
+                                    snapshot.bases_passed + snapshot.bases_failed;
                             }
                         }
                     }
@@ -316,17 +319,19 @@ impl PositionClient {
             for filtered in &response.snapshots {
                 for snapshot in &filtered.snapshots {
                     if let Some(yield_summary) = &snapshot.yield_summary {
-                        let basecalled_reads = (yield_summary.basecalled_pass_read_count
-                            + yield_summary.basecalled_fail_read_count)
-                            as u64;
-                        let basecalled_bases = (yield_summary.basecalled_pass_bases
-                            + yield_summary.basecalled_fail_bases)
-                            as u64;
+                        let reads_passed = yield_summary.basecalled_pass_read_count as u64;
+                        let reads_failed = yield_summary.basecalled_fail_read_count as u64;
+                        let bases_passed = yield_summary.basecalled_pass_bases as u64;
+                        let bases_failed = yield_summary.basecalled_fail_bases as u64;
 
                         points.push(YieldDataPoint {
                             seconds: snapshot.seconds,
-                            reads: basecalled_reads,
-                            bases: basecalled_bases,
+                            reads: reads_passed + reads_failed,
+                            bases: bases_passed + bases_failed,
+                            reads_passed,
+                            reads_failed,
+                            bases_passed,
+                            bases_failed,
                         });
                     }
                 }
@@ -615,12 +620,7 @@ impl PositionClient {
 
         let coords: Vec<(u32, u32)> = raw_coords
             .iter()
-            .map(|(x, y)| {
-                (
-                    *x_map.get(x).unwrap_or(&0),
-                    *y_map.get(y).unwrap_or(&0),
-                )
-            })
+            .map(|(x, y)| (*x_map.get(x).unwrap_or(&0), *y_map.get(y).unwrap_or(&0)))
             .collect();
 
         Ok(super::ChannelLayout {

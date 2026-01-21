@@ -507,11 +507,19 @@ mod tests {
                 seconds: 0,
                 reads: 0,
                 bases: 0,
+                reads_passed: 0,
+                reads_failed: 0,
+                bases_passed: 0,
+                bases_failed: 0,
             },
             YieldDataPoint {
                 seconds: 60,
                 reads: 1000,
                 bases: 5_000_000,
+                reads_passed: 900,
+                reads_failed: 100,
+                bases_passed: 4_500_000,
+                bases_failed: 500_000,
             },
         ];
         app.update_yield_history("X1", data.clone());

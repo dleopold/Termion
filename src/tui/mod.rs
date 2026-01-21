@@ -318,7 +318,8 @@ async fn fetch_detail_data(app: &mut App, pos_client: &mut crate::client::Positi
                 );
 
                 if !duty_time.pore_occupancy.is_empty() {
-                    let sample: Vec<f32> = duty_time.pore_occupancy.iter().take(10).copied().collect();
+                    let sample: Vec<f32> =
+                        duty_time.pore_occupancy.iter().take(10).copied().collect();
                     tracing::debug!(sample = ?sample, "First 10 occupancy values");
                 }
 
