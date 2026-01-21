@@ -1,6 +1,9 @@
 //! Application state and core logic.
 
-use crate::client::{Position, StatsSnapshot};
+use crate::client::{
+    ChannelLayout, ChannelStatesSnapshot, DutyTimeSnapshot, Position, ReadLengthHistogram,
+    StatsSnapshot, YieldDataPoint,
+};
 use crate::config::Config;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -9,6 +12,26 @@ use std::time::Instant;
 pub enum Screen {
     Overview,
     PositionDetail { position_idx: usize },
+}
+
+/// Which chart to display in the position detail view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DetailChart {
+    /// Cumulative yield over time (reads or bases).
+    #[default]
+    Yield,
+    /// Read length histogram.
+    ReadLength,
+    /// Pore activity visualization.
+    PoreActivity,
+}
+
+/// Unit for yield chart display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum YieldUnit {
+    Bases,
+    #[default]
+    Reads,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +60,14 @@ pub struct App {
     pub chart_data: HashMap<String, ChartBuffer>,
     pub should_quit: bool,
     pub last_error: Option<String>,
+    pub detail_chart: DetailChart,
+    pub yield_unit: YieldUnit,
+    pub exclude_outliers: bool,
+    pub yield_history: HashMap<String, Vec<YieldDataPoint>>,
+    pub histograms: HashMap<String, ReadLengthHistogram>,
+    pub duty_time: HashMap<String, DutyTimeSnapshot>,
+    pub channel_states: HashMap<String, ChannelStatesSnapshot>,
+    pub channel_layouts: HashMap<String, ChannelLayout>,
 }
 
 pub struct ChartBuffer {
@@ -77,7 +108,25 @@ impl App {
             chart_data: HashMap::new(),
             should_quit: false,
             last_error: None,
+            detail_chart: DetailChart::default(),
+            yield_unit: YieldUnit::default(),
+            exclude_outliers: false,
+            yield_history: HashMap::new(),
+            histograms: HashMap::new(),
+            duty_time: HashMap::new(),
+            channel_states: HashMap::new(),
+            channel_layouts: HashMap::new(),
         }
+    }
+
+    pub fn update_channel_states(&mut self, position_name: &str, states: ChannelStatesSnapshot) {
+        self.channel_states
+            .insert(position_name.to_string(), states);
+    }
+
+    pub fn update_channel_layout(&mut self, position_name: &str, layout: ChannelLayout) {
+        self.channel_layouts
+            .insert(position_name.to_string(), layout);
     }
 
     pub fn select_next(&mut self) {
@@ -175,6 +224,42 @@ impl App {
 
     pub fn is_connected(&self) -> bool {
         matches!(self.connection, ConnectionState::Connected)
+    }
+
+    pub fn cycle_detail_chart(&mut self) {
+        self.detail_chart = match self.detail_chart {
+            DetailChart::Yield => DetailChart::ReadLength,
+            DetailChart::ReadLength => DetailChart::PoreActivity,
+            DetailChart::PoreActivity => DetailChart::Yield,
+        };
+    }
+
+    pub fn set_detail_chart(&mut self, chart: DetailChart) {
+        self.detail_chart = chart;
+    }
+
+    pub fn toggle_yield_unit(&mut self) {
+        self.yield_unit = match self.yield_unit {
+            YieldUnit::Bases => YieldUnit::Reads,
+            YieldUnit::Reads => YieldUnit::Bases,
+        };
+        tracing::debug!(new_unit = ?self.yield_unit, "Toggled yield unit");
+    }
+
+    pub fn toggle_outliers(&mut self) {
+        self.exclude_outliers = !self.exclude_outliers;
+    }
+
+    pub fn update_yield_history(&mut self, position_name: &str, data: Vec<YieldDataPoint>) {
+        self.yield_history.insert(position_name.to_string(), data);
+    }
+
+    pub fn update_histogram(&mut self, position_name: &str, histogram: ReadLengthHistogram) {
+        self.histograms.insert(position_name.to_string(), histogram);
+    }
+
+    pub fn update_duty_time(&mut self, position_name: &str, duty_time: DutyTimeSnapshot) {
+        self.duty_time.insert(position_name.to_string(), duty_time);
     }
 }
 
@@ -366,5 +451,97 @@ mod tests {
 
         app.set_disconnected("test".into());
         assert!(!app.is_connected());
+    }
+
+    #[test]
+    fn test_cycle_detail_chart() {
+        let mut app = App::new(test_config());
+        assert_eq!(app.detail_chart, DetailChart::Yield);
+
+        app.cycle_detail_chart();
+        assert_eq!(app.detail_chart, DetailChart::ReadLength);
+
+        app.cycle_detail_chart();
+        assert_eq!(app.detail_chart, DetailChart::PoreActivity);
+
+        app.cycle_detail_chart();
+        assert_eq!(app.detail_chart, DetailChart::Yield);
+    }
+
+    #[test]
+    fn test_set_detail_chart() {
+        let mut app = App::new(test_config());
+        app.set_detail_chart(DetailChart::PoreActivity);
+        assert_eq!(app.detail_chart, DetailChart::PoreActivity);
+    }
+
+    #[test]
+    fn test_toggle_yield_unit() {
+        let mut app = App::new(test_config());
+        assert_eq!(app.yield_unit, YieldUnit::Reads);
+
+        app.toggle_yield_unit();
+        assert_eq!(app.yield_unit, YieldUnit::Bases);
+
+        app.toggle_yield_unit();
+        assert_eq!(app.yield_unit, YieldUnit::Reads);
+    }
+
+    #[test]
+    fn test_toggle_outliers() {
+        let mut app = App::new(test_config());
+        assert!(!app.exclude_outliers);
+
+        app.toggle_outliers();
+        assert!(app.exclude_outliers);
+
+        app.toggle_outliers();
+        assert!(!app.exclude_outliers);
+    }
+
+    #[test]
+    fn test_update_yield_history() {
+        let mut app = App::new(test_config());
+        let data = vec![
+            YieldDataPoint {
+                seconds: 0,
+                reads: 0,
+                bases: 0,
+            },
+            YieldDataPoint {
+                seconds: 60,
+                reads: 1000,
+                bases: 5_000_000,
+            },
+        ];
+        app.update_yield_history("X1", data.clone());
+        assert_eq!(app.yield_history.get("X1").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_update_histogram() {
+        let mut app = App::new(test_config());
+        let histogram = ReadLengthHistogram {
+            bucket_ranges: vec![(0, 1000), (1000, 2000)],
+            bucket_values: vec![100, 50],
+            n50: 1500.0,
+            outliers_excluded: false,
+            outlier_percent: 0.0,
+        };
+        app.update_histogram("X1", histogram);
+        assert!(app.histograms.contains_key("X1"));
+    }
+
+    #[test]
+    fn test_update_duty_time() {
+        let mut app = App::new(test_config());
+        let duty_time = DutyTimeSnapshot {
+            time_range: (0, 60),
+            state_times: std::collections::HashMap::new(),
+            pore_occupancy: vec![0.5, 0.8, 0.3],
+        };
+        app.update_duty_time("X1", duty_time);
+        assert!(app.duty_time.contains_key("X1"));
+        assert_eq!(app.duty_time.get("X1").unwrap().pore_occupancy.len(), 3);
     }
 }

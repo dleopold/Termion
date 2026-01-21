@@ -62,6 +62,12 @@ pub enum Action {
     Pause,
     Resume,
     Stop,
+    ToggleYieldUnit,
+    ToggleOutliers,
+    ChartYield,
+    ChartReadLength,
+    ChartPoreActivity,
+    CycleChart,
     None,
 }
 
@@ -79,6 +85,12 @@ impl From<KeyEvent> for Action {
             KeyCode::Char('p') => Action::Pause,
             KeyCode::Char('r') => Action::Resume,
             KeyCode::Char('s') => Action::Stop,
+            KeyCode::Char('b') => Action::ToggleYieldUnit,
+            KeyCode::Char('o') => Action::ToggleOutliers,
+            KeyCode::Char('1') => Action::ChartYield,
+            KeyCode::Char('2') => Action::ChartReadLength,
+            KeyCode::Char('3') => Action::ChartPoreActivity,
+            KeyCode::Tab => Action::CycleChart,
             _ => Action::None,
         }
     }

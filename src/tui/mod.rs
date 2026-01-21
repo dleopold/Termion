@@ -7,7 +7,7 @@ mod app;
 mod event;
 mod ui;
 
-pub use app::{App, ChartBuffer, ConnectionState, Overlay, Screen};
+pub use app::{App, ChartBuffer, ConnectionState, DetailChart, Overlay, Screen, YieldUnit};
 pub use event::{Action, Event, EventHandler};
 
 use crate::client::Client;
@@ -199,6 +199,12 @@ async fn handle_action(
         Action::Pause | Action::Resume | Action::Stop => {
             // TODO: Implement run control actions
         }
+        Action::ToggleYieldUnit => app.toggle_yield_unit(),
+        Action::ToggleOutliers => app.toggle_outliers(),
+        Action::ChartYield => app.set_detail_chart(DetailChart::Yield),
+        Action::ChartReadLength => app.set_detail_chart(DetailChart::ReadLength),
+        Action::ChartPoreActivity => app.set_detail_chart(DetailChart::PoreActivity),
+        Action::CycleChart => app.cycle_detail_chart(),
         Action::None => {}
     }
 }
@@ -210,10 +216,20 @@ async fn refresh_data(app: &mut App, client: &mut Client) {
 
     match client.list_positions().await {
         Ok(positions) => {
-            for pos in &positions {
+            let in_detail_view = matches!(app.screen, Screen::PositionDetail { .. });
+            let detail_position_idx = match app.screen {
+                Screen::PositionDetail { position_idx } => Some(position_idx),
+                _ => None,
+            };
+
+            for (idx, pos) in positions.iter().enumerate() {
                 if let Ok(mut pos_client) = client.connect_position(pos.clone()).await {
                     if let Ok(stats) = pos_client.get_stats().await {
                         app.update_stats(&pos.name, stats);
+                    }
+
+                    if in_detail_view && detail_position_idx == Some(idx) {
+                        fetch_detail_data(app, &mut pos_client).await;
                     }
                 }
             }
@@ -221,6 +237,145 @@ async fn refresh_data(app: &mut App, client: &mut Client) {
         }
         Err(e) => {
             app.set_disconnected(e.display_message());
+        }
+    }
+}
+
+async fn fetch_detail_data(app: &mut App, pos_client: &mut crate::client::PositionClient) {
+    let position_name = pos_client.position.name.clone();
+    tracing::info!(position = %position_name, "Fetching detail data");
+
+    let run_id = match pos_client.get_current_run_id().await {
+        Ok(Some(id)) => {
+            tracing::debug!(position = %position_name, run_id = %id, "Found active run");
+            id
+        }
+        Ok(None) => {
+            tracing::debug!(position = %position_name, "No active run, skipping detail data");
+            return;
+        }
+        Err(e) => {
+            tracing::debug!(position = %position_name, error = %e.display_message(), "Failed to get run_id");
+            return;
+        }
+    };
+
+    match pos_client.get_yield_history(&run_id).await {
+        Ok(points) if !points.is_empty() => {
+            tracing::debug!(position = %position_name, points = points.len(), "Got yield history");
+
+            if let Some(stats) = app.stats_cache.get_mut(&position_name) {
+                if points.len() >= 2 {
+                    let recent = &points[points.len() - 1];
+                    let prev = &points[points.len() - 2];
+                    let time_delta = (recent.seconds - prev.seconds).max(1) as f64;
+                    let bases_delta = recent.bases.saturating_sub(prev.bases) as f64;
+                    stats.throughput_bps = bases_delta / time_delta;
+                    stats.throughput_gbph = stats.throughput_bps * 3600.0 / 1_000_000_000.0;
+                }
+            }
+
+            app.update_yield_history(&position_name, points);
+        }
+        Ok(_) => {
+            tracing::debug!(position = %position_name, "No yield data available");
+        }
+        Err(e) => {
+            tracing::debug!(position = %position_name, error = %e.display_message(), "Yield history failed");
+        }
+    }
+
+    use futures::StreamExt;
+
+    match pos_client
+        .stream_read_length_histogram(&run_id, app.exclude_outliers)
+        .await
+    {
+        Ok(mut stream) => {
+            if let Some(Ok(histogram)) = stream.next().await {
+                tracing::debug!(position = %position_name, buckets = histogram.bucket_values.len(), "Got histogram");
+                app.update_histogram(&position_name, histogram);
+            }
+        }
+        Err(e) => {
+            tracing::debug!(position = %position_name, error = %e.display_message(), "Histogram stream failed");
+        }
+    }
+
+    match pos_client.stream_duty_time(&run_id).await {
+        Ok(mut stream) => {
+            if let Some(Ok(duty_time)) = stream.next().await {
+                let counts = duty_time.pore_counts();
+                tracing::debug!(
+                    position = %position_name,
+                    total_pores = duty_time.pore_occupancy.len(),
+                    sequencing = counts.sequencing,
+                    pore_available = counts.pore_available,
+                    inactive = counts.inactive,
+                    unavailable = counts.unavailable,
+                    avg_occupancy = %format!("{:.2}", duty_time.average_occupancy()),
+                    "Got duty time"
+                );
+
+                if !duty_time.pore_occupancy.is_empty() {
+                    let sample: Vec<f32> = duty_time.pore_occupancy.iter().take(10).copied().collect();
+                    tracing::debug!(sample = ?sample, "First 10 occupancy values");
+                }
+
+                if let Some(stats) = app.stats_cache.get_mut(&position_name) {
+                    stats.active_pores = duty_time.active_pores(0.1) as u32;
+                }
+
+                app.update_duty_time(&position_name, duty_time);
+            }
+        }
+        Err(e) => {
+            tracing::debug!(position = %position_name, error = %e.display_message(), "Duty time stream failed");
+        }
+    }
+
+    match pos_client.get_mean_quality(&run_id).await {
+        Ok(Some(quality)) => {
+            tracing::debug!(position = %position_name, quality = quality, "Got mean quality");
+            if let Some(stats) = app.stats_cache.get_mut(&position_name) {
+                stats.mean_quality = quality as f64;
+            }
+        }
+        Ok(None) => {
+            tracing::debug!(position = %position_name, "No quality data available");
+        }
+        Err(e) => {
+            tracing::debug!(position = %position_name, error = %e.display_message(), "Quality boxplot failed");
+        }
+    }
+
+    match pos_client.get_channel_states(512).await {
+        Ok(channel_states) => {
+            if let Some(stats) = app.stats_cache.get_mut(&position_name) {
+                stats.active_pores = channel_states.sequencing_count() as u32;
+            }
+            app.update_channel_states(&position_name, channel_states);
+        }
+        Err(e) => {
+            tracing::debug!(position = %position_name, error = %e.display_message(), "Channel states failed");
+        }
+    }
+
+    if !app.channel_layouts.contains_key(&position_name) {
+        match pos_client.get_channel_layout().await {
+            Ok(layout) => {
+                tracing::info!(
+                    position = %position_name,
+                    width = layout.width,
+                    height = layout.height,
+                    channels = layout.channel_count,
+                    "Got channel layout"
+                );
+                app.update_channel_layout(&position_name, layout);
+            }
+            Err(e) => {
+                tracing::debug!(position = %position_name, error = %e.display_message(), "Channel layout failed");
+            }
         }
     }
 }

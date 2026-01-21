@@ -15,6 +15,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "proto/minknow_api/acquisition.proto",
                 "proto/minknow_api/statistics.proto",
                 "proto/minknow_api/instance.proto",
+                "proto/minknow_api/data.proto",
+                "proto/minknow_api/device.proto",
             ],
             &["proto/"],
         )?;

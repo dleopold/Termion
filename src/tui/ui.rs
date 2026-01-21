@@ -1,13 +1,19 @@
 //! UI rendering functions.
 
-use super::app::{App, ConnectionState, Overlay, Screen};
-use crate::client::{Position, PositionState, StatsSnapshot};
+use super::app::{App, ConnectionState, DetailChart, Overlay, Screen, YieldUnit};
+use crate::client::{
+    ChannelLayout, ChannelStatesSnapshot, Position, PositionState, ReadLengthHistogram,
+    StatsSnapshot,
+};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     symbols,
     text::{Line, Span},
-    widgets::{Axis, Block, Borders, Chart, Dataset, GraphType, Paragraph, Row, Table, Wrap},
+    widgets::{
+        Axis, Bar, BarChart, BarGroup, Block, Borders, Chart, Dataset, GraphType, Paragraph, Row,
+        Table, Wrap,
+    },
     Frame,
 };
 
@@ -170,11 +176,38 @@ fn render_position_table(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(table, area);
 }
 
-fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
-    let hints = match &app.screen {
-        Screen::Overview => "[↑↓] Navigate  [Enter] Details  [q] Quit  [?] Help",
-        Screen::PositionDetail { .. } => "[Esc] Back  [p] Pause  [r] Resume  [s] Stop  [?] Help",
+fn render_footer(frame: &mut Frame, _app: &App, area: Rect) {
+    let hints = "[↑↓] Navigate  [Enter] Details  [q] Quit  [?] Help";
+
+    let footer = Paragraph::new(hints)
+        .style(Style::default().fg(Color::DarkGray))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
+
+    frame.render_widget(footer, area);
+}
+
+fn render_detail_footer(frame: &mut Frame, app: &App, area: Rect) {
+    let chart_hints = match app.detail_chart {
+        DetailChart::Yield => {
+            let unit = match app.yield_unit {
+                YieldUnit::Bases => "bases",
+                YieldUnit::Reads => "reads",
+            };
+            format!("[b] Toggle ({})  ", unit)
+        }
+        DetailChart::ReadLength => {
+            let outliers = if app.exclude_outliers {
+                "excluding"
+            } else {
+                "including"
+            };
+            format!("[o] Outliers ({})  ", outliers)
+        }
+        DetailChart::PoreActivity => String::new(),
     };
+
+    let hints = format!("[Esc] Back  [1/2/3|Tab] Charts  {}[?] Help", chart_hints);
 
     let footer = Paragraph::new(hints)
         .style(Style::default().fg(Color::DarkGray))
@@ -204,16 +237,27 @@ fn render_position_detail(frame: &mut Frame, app: &App, position_idx: usize, are
             Constraint::Length(3),
             Constraint::Length(5),
             Constraint::Min(10),
-            Constraint::Length(7),
             Constraint::Length(3),
         ])
         .split(area);
 
     render_detail_header(frame, position, chunks[0]);
     render_run_info(frame, position, stats, chunks[1]);
-    render_throughput_chart(frame, app, &position.name, chunks[2]);
-    render_stats_grid(frame, stats, chunks[3]);
-    render_footer(frame, app, chunks[4]);
+
+    match app.detail_chart {
+        DetailChart::Yield => render_yield_chart(frame, app, &position.name, chunks[2]),
+        DetailChart::ReadLength => {
+            let histogram = app.histograms.get(&position.name);
+            render_histogram_chart(frame, histogram, app.exclude_outliers, chunks[2]);
+        }
+        DetailChart::PoreActivity => {
+            let channel_states = app.channel_states.get(&position.name);
+            let channel_layout = app.channel_layouts.get(&position.name);
+            render_pore_activity(frame, channel_states, channel_layout, chunks[2]);
+        }
+    }
+
+    render_detail_footer(frame, app, chunks[3]);
 }
 
 fn render_detail_header(frame: &mut Frame, position: &Position, area: Rect) {
@@ -255,18 +299,70 @@ fn render_run_info(
     stats: Option<&StatsSnapshot>,
     area: Rect,
 ) {
-    let info_text = if let Some(stats) = stats {
-        format!(
-            "Reads: {}  │  Passed: {}  │  Failed: {}",
-            format_number(stats.reads_processed),
-            format_number(stats.reads_passed),
-            format_number(stats.reads_failed),
-        )
+    let content = if let Some(s) = stats {
+        vec![
+            Line::from(vec![
+                Span::styled("Reads: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format_number(s.reads_processed), Style::default().bold()),
+                Span::raw("    "),
+                Span::styled("Bases: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format_bytes(s.bases_called), Style::default().bold()),
+                Span::raw("    "),
+                Span::styled("Throughput: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!("{:.2} Gb/h", s.throughput_gbph),
+                    Style::default().bold().fg(Color::Cyan),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Passed: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format_number(s.reads_passed),
+                    Style::default().fg(Color::Green),
+                ),
+                Span::raw("    "),
+                Span::styled("Failed: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format_number(s.reads_failed),
+                    Style::default().fg(Color::Red),
+                ),
+                Span::raw("    "),
+                Span::styled("Pass Rate: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{:.1}%", s.pass_rate()), Style::default().bold()),
+            ]),
+            Line::from(vec![
+                Span::styled("Active Pores: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format_number(s.active_pores as u64),
+                    Style::default().bold().fg(Color::Yellow),
+                ),
+                Span::raw("    "),
+                Span::styled("Mean Quality: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    if s.mean_quality > 0.0 {
+                        format!("Q{:.1}", s.mean_quality)
+                    } else {
+                        "--".to_string()
+                    },
+                    Style::default().bold(),
+                ),
+                Span::raw("    "),
+                Span::styled("Mean Length: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    if s.mean_read_length > 0.0 {
+                        format_number(s.mean_read_length as u64)
+                    } else {
+                        "--".to_string()
+                    },
+                    Style::default().bold(),
+                ),
+            ]),
+        ]
     } else {
-        "No data available".to_string()
+        vec![Line::from("No data available")]
     };
 
-    let info = Paragraph::new(info_text).style(Style::default()).block(
+    let info = Paragraph::new(content).block(
         Block::default()
             .title(" Run Info ")
             .borders(Borders::ALL)
@@ -276,10 +372,36 @@ fn render_run_info(
     frame.render_widget(info, area);
 }
 
-fn render_throughput_chart(frame: &mut Frame, app: &App, position_name: &str, area: Rect) {
+fn render_yield_chart(frame: &mut Frame, app: &App, position_name: &str, area: Rect) {
+    let yield_data = app.yield_history.get(position_name);
     let chart_data = app.chart_data.get(position_name);
 
-    let data: Vec<(f64, f64)> = chart_data.map(|c| c.data.clone()).unwrap_or_default();
+    let (title, data): (&str, Vec<(f64, f64)>) = if let Some(yield_points) = yield_data {
+        if yield_points.is_empty() {
+            ("Cumulative Yield", Vec::new())
+        } else {
+            match app.yield_unit {
+                YieldUnit::Bases => {
+                    let points: Vec<(f64, f64)> = yield_points
+                        .iter()
+                        .map(|p| (p.seconds as f64, p.bases as f64 / 1_000_000_000.0))
+                        .collect();
+                    ("Cumulative Yield (Gb)", points)
+                }
+                YieldUnit::Reads => {
+                    let points: Vec<(f64, f64)> = yield_points
+                        .iter()
+                        .map(|p| (p.seconds as f64, p.reads as f64 / 1_000_000.0))
+                        .collect();
+                    ("Cumulative Yield (M reads)", points)
+                }
+            }
+        }
+    } else if let Some(c) = chart_data {
+        ("Throughput (Gb/h)", c.data.clone())
+    } else {
+        ("Cumulative Yield", Vec::new())
+    };
 
     if data.is_empty() {
         let placeholder = Paragraph::new("Waiting for data...")
@@ -287,7 +409,7 @@ fn render_throughput_chart(frame: &mut Frame, app: &App, position_name: &str, ar
             .alignment(Alignment::Center)
             .block(
                 Block::default()
-                    .title(" Throughput ")
+                    .title(format!(" {} ", title))
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::Cyan)),
             );
@@ -301,17 +423,24 @@ fn render_throughput_chart(frame: &mut Frame, app: &App, position_name: &str, ar
 
     let normalized: Vec<(f64, f64)> = data.iter().map(|(x, y)| (x - min_x, *y)).collect();
 
+    let y_label = match app.yield_unit {
+        YieldUnit::Bases => "Gb",
+        YieldUnit::Reads => "M",
+    };
+
     let datasets = vec![Dataset::default()
-        .name("Gb/h")
+        .name(y_label)
         .marker(symbols::Marker::Braille)
         .graph_type(GraphType::Line)
         .style(Style::default().fg(Color::Cyan))
         .data(&normalized)];
 
+    let time_label = format_time_label(max_x - min_x);
+
     let chart = Chart::new(datasets)
         .block(
             Block::default()
-                .title(" Throughput ")
+                .title(format!(" {} [1] ", title))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Cyan)),
         )
@@ -319,7 +448,7 @@ fn render_throughput_chart(frame: &mut Frame, app: &App, position_name: &str, ar
             Axis::default()
                 .style(Style::default().fg(Color::DarkGray))
                 .bounds([0.0, max_x - min_x])
-                .labels(vec![Line::from(""), Line::from("now")]),
+                .labels(vec![Line::from("0"), Line::from(time_label)]),
         )
         .y_axis(
             Axis::default()
@@ -335,49 +464,304 @@ fn render_throughput_chart(frame: &mut Frame, app: &App, position_name: &str, ar
     frame.render_widget(chart, area);
 }
 
-fn render_stats_grid(frame: &mut Frame, stats: Option<&StatsSnapshot>, area: Rect) {
-    let content = if let Some(s) = stats {
-        vec![
-            Line::from(vec![
-                Span::styled("Reads: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(format_number(s.reads_processed), Style::default().bold()),
-                Span::raw("    "),
-                Span::styled("Bases: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(format_bytes(s.bases_called), Style::default().bold()),
-            ]),
-            Line::from(vec![
-                Span::styled("Passed: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    format_number(s.reads_passed),
-                    Style::default().fg(Color::Green),
-                ),
-                Span::raw("    "),
-                Span::styled("Failed: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    format_number(s.reads_failed),
-                    Style::default().fg(Color::Red),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("Throughput: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    format!("{:.2} Gb/h", s.throughput_gbph),
-                    Style::default().bold().fg(Color::Cyan),
-                ),
-            ]),
-        ]
+fn render_histogram_chart(
+    frame: &mut Frame,
+    histogram: Option<&ReadLengthHistogram>,
+    exclude_outliers: bool,
+    area: Rect,
+) {
+    let title = if exclude_outliers {
+        " Read Length Distribution (outliers excluded) [2] "
     } else {
-        vec![Line::from("No statistics available")]
+        " Read Length Distribution [2] "
     };
 
-    let stats_widget = Paragraph::new(content).block(
+    let histogram = match histogram {
+        Some(h) if !h.bucket_values.is_empty() => h,
+        _ => {
+            let placeholder = Paragraph::new("Waiting for histogram data...")
+                .style(Style::default().fg(Color::DarkGray))
+                .alignment(Alignment::Center)
+                .block(
+                    Block::default()
+                        .title(title)
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Magenta)),
+                );
+            frame.render_widget(placeholder, area);
+            return;
+        }
+    };
+
+    let max_count = histogram.max_value();
+    let num_buckets = histogram.bucket_values.len().min(20);
+
+    let bars: Vec<Bar> = histogram
+        .bucket_ranges
+        .iter()
+        .zip(histogram.bucket_values.iter())
+        .take(num_buckets)
+        .map(|((start, end), &count)| {
+            let label = if *end >= 10000 {
+                format!("{}k", start / 1000)
+            } else {
+                format!("{}", start)
+            };
+            Bar::default()
+                .value(count)
+                .label(Line::from(label))
+                .style(Style::default().fg(Color::Magenta))
+        })
+        .collect();
+
+    let n50_info = format!("N50: {} bp", format_number(histogram.n50 as u64));
+
+    let bar_chart = BarChart::default()
+        .block(
+            Block::default()
+                .title(title)
+                .title_bottom(Line::from(n50_info).alignment(Alignment::Right))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Magenta)),
+        )
+        .data(BarGroup::default().bars(&bars))
+        .bar_width(3)
+        .bar_gap(1)
+        .max(max_count);
+
+    frame.render_widget(bar_chart, area);
+}
+
+fn render_pore_activity(
+    frame: &mut Frame,
+    channel_states: Option<&ChannelStatesSnapshot>,
+    channel_layout: Option<&ChannelLayout>,
+    area: Rect,
+) {
+    let title = " Pore Activity [3] ";
+
+    let channel_states = match channel_states {
+        Some(cs) if !cs.states.is_empty() => cs,
+        _ => {
+            let placeholder = Paragraph::new("Waiting for channel data...")
+                .style(Style::default().fg(Color::DarkGray))
+                .alignment(Alignment::Center)
+                .block(
+                    Block::default()
+                        .title(title)
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Yellow)),
+                );
+            frame.render_widget(placeholder, area);
+            return;
+        }
+    };
+
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .split(area);
+
+    render_pore_grid_from_states(frame, channel_states, channel_layout, chunks[0]);
+    render_state_counts(frame, channel_states, chunks[1]);
+}
+
+fn render_pore_grid_from_states(
+    frame: &mut Frame,
+    channel_states: &ChannelStatesSnapshot,
+    channel_layout: Option<&ChannelLayout>,
+    area: Rect,
+) {
+    let inner = Block::default()
+        .title(" Channel Map ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow));
+
+    let inner_area = inner.inner(area);
+    frame.render_widget(inner, area);
+
+    let screen_width = inner_area.width as usize;
+    let screen_height = inner_area.height as usize;
+
+    if screen_width == 0 || screen_height == 0 || channel_states.states.is_empty() {
+        return;
+    }
+
+    let total_channels = channel_states.states.len();
+
+    let (grid_width, grid_height) = if let Some(layout) = channel_layout {
+        (layout.width as usize, layout.height as usize)
+    } else {
+        let size = (total_channels as f64).sqrt().ceil() as usize;
+        (size, size)
+    };
+
+    let has_two_blocks = grid_height == 16;
+    let gap_after_row = if has_two_blocks { Some(7usize) } else { None };
+    let total_display_height = if has_two_blocks {
+        grid_height + 1
+    } else {
+        grid_height
+    };
+
+    let cell_char_width = 2usize;
+    let scale_x = ((grid_width * cell_char_width) as f64 / screen_width as f64).max(1.0);
+    let scale_y = (total_display_height as f64 / screen_height as f64).max(1.0);
+    let scale = scale_x.max(scale_y);
+
+    let display_cols =
+        ((grid_width as f64 / scale).ceil() as usize).min(screen_width / cell_char_width);
+    let display_rows = ((total_display_height as f64 / scale).ceil() as usize).min(screen_height);
+
+    let grid_pixel_width = display_cols * cell_char_width;
+    let grid_pixel_height = display_rows;
+    let offset_x = (screen_width.saturating_sub(grid_pixel_width)) / 2;
+    let offset_y = (screen_height.saturating_sub(grid_pixel_height)) / 2;
+
+    let coord_to_channel: std::collections::HashMap<(u32, u32), usize> =
+        if let Some(layout) = channel_layout {
+            layout
+                .coords
+                .iter()
+                .enumerate()
+                .map(|(idx, &coord)| (coord, idx))
+                .collect()
+        } else {
+            std::collections::HashMap::new()
+        };
+
+    let mut lines: Vec<Line> = Vec::with_capacity(screen_height);
+
+    for _ in 0..offset_y {
+        lines.push(Line::from(""));
+    }
+
+    let mut grid_row = 0usize;
+    for display_row in 0..display_rows {
+        if let Some(gap_row) = gap_after_row {
+            let gap_display_row = ((gap_row + 1) as f64 / scale).floor() as usize;
+            if display_row == gap_display_row && scale <= 1.5 {
+                lines.push(Line::from(""));
+                continue;
+            }
+        }
+
+        let padding = " ".repeat(offset_x);
+        let mut spans: Vec<Span> = vec![Span::raw(padding)];
+
+        for display_col in 0..display_cols {
+            let grid_x = (display_col as f64 * scale).floor() as u32;
+            let grid_y = grid_row as u32;
+
+            let channel_idx = if channel_layout.is_some() {
+                coord_to_channel.get(&(grid_x, grid_y)).copied()
+            } else {
+                let idx = (grid_y as usize) * grid_width + (grid_x as usize);
+                if idx < total_channels {
+                    Some(idx)
+                } else {
+                    None
+                }
+            };
+
+            let (symbol, color) = match channel_idx {
+                Some(idx) if idx < channel_states.states.len() => {
+                    state_to_symbol(&channel_states.states[idx])
+                }
+                _ => ("  ", Color::Black),
+            };
+            spans.push(Span::styled(symbol, Style::default().fg(color)));
+        }
+        lines.push(Line::from(spans));
+        grid_row = (grid_row + 1).min(grid_height.saturating_sub(1));
+    }
+
+    let grid = Paragraph::new(lines);
+    frame.render_widget(grid, inner_area);
+}
+
+fn render_state_counts(frame: &mut Frame, channel_states: &ChannelStatesSnapshot, area: Rect) {
+    let total = channel_states.channel_count;
+
+    let mut lines: Vec<Line> = vec![
+        Line::from(Span::styled("Channel States", Style::default().bold())),
+        Line::from(""),
+    ];
+
+    let sequencing = channel_states.sequencing_count();
+    let pore_available = channel_states.pore_available_count();
+    let unavailable = channel_states.unavailable_count();
+    let other = total.saturating_sub(sequencing + pore_available + unavailable);
+
+    let categories = [
+        ("Sequencing", sequencing, Color::Green),
+        ("Pore Available", pore_available, Color::Blue),
+        ("Unavailable", unavailable, Color::Red),
+        ("Other", other, Color::DarkGray),
+    ];
+
+    for (label, count, color) in &categories {
+        let percent = if total > 0 {
+            (*count as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled("● ", Style::default().fg(*color)),
+            Span::styled(format!("{:>4}", count), Style::default().bold()),
+            Span::styled(format!(" {:14}", label), Style::default()),
+            Span::styled(
+                format!("{:5.1}%", percent),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("Total: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("{}", total), Style::default().bold()),
+        Span::raw(" channels"),
+    ]));
+
+    let breakdown = Paragraph::new(lines).block(
         Block::default()
             .title(" Statistics ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan)),
+            .border_style(Style::default().fg(Color::Yellow)),
     );
 
-    frame.render_widget(stats_widget, area);
+    frame.render_widget(breakdown, area);
+}
+
+fn state_to_symbol(state: &str) -> (&'static str, Color) {
+    let s = state.to_lowercase();
+    if s.contains("strand") || s.contains("sequencing") {
+        ("██", Color::Green)
+    } else if s.contains("pore") || s.contains("single") {
+        ("██", Color::Blue)
+    } else if s.contains("unavailable") || s.contains("saturated") || s.contains("multiple") {
+        ("░░", Color::Red)
+    } else if s.contains("adapter") || s.contains("event") {
+        ("▓▓", Color::Cyan)
+    } else if s.contains("unblock") {
+        ("▒▒", Color::Yellow)
+    } else if s.is_empty() || s == "unknown" {
+        ("  ", Color::Black)
+    } else {
+        ("░░", Color::DarkGray)
+    }
+}
+
+fn format_time_label(seconds: f64) -> String {
+    if seconds >= 3600.0 {
+        format!("{:.1}h", seconds / 3600.0)
+    } else if seconds >= 60.0 {
+        format!("{:.0}m", seconds / 60.0)
+    } else {
+        format!("{:.0}s", seconds)
+    }
 }
 
 fn render_help_overlay(frame: &mut Frame, area: Rect) {
@@ -391,6 +775,14 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from("  ↑/↓        Move selection"),
         Line::from("  Enter      Select / Drill down"),
         Line::from("  Esc        Back / Close"),
+        Line::from(""),
+        Line::from(Span::styled("Detail View", Style::default().bold())),
+        Line::from("  1          Yield chart"),
+        Line::from("  2          Read length histogram"),
+        Line::from("  3          Pore activity"),
+        Line::from("  Tab        Cycle charts"),
+        Line::from("  b          Toggle bases/reads"),
+        Line::from("  o          Toggle outlier exclusion"),
         Line::from(""),
         Line::from(Span::styled("Actions", Style::default().bold())),
         Line::from("  p          Pause acquisition"),

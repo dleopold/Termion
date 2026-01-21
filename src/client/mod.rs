@@ -22,7 +22,11 @@ mod types;
 
 pub use error::ClientError;
 pub use position::{AcquisitionInfo, PositionClient};
-pub use types::{Device, DeviceState, Position, PositionState, RunState, StatsSnapshot};
+pub use types::{
+    ChannelLayout, ChannelState, ChannelStatesSnapshot, Device, DeviceState, DutyTimeSnapshot,
+    PoreCategory, PoreCounts, Position, PositionState, ReadLengthHistogram, RunState,
+    StatsSnapshot, YieldDataPoint,
+};
 
 use crate::proto::minknow_api::manager::{
     manager_service_client::ManagerServiceClient, FlowCellPositionsRequest,

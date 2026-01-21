@@ -1,12 +1,23 @@
 //! Position-specific client for acquisition and statistics services.
 
-use super::{ClientError, Position, RunState, StatsSnapshot};
+use super::{
+    ChannelState, ClientError, DutyTimeSnapshot, Position, ReadLengthHistogram, RunState,
+    StatsSnapshot, YieldDataPoint,
+};
 use crate::proto::minknow_api::acquisition::{
     acquisition_service_client::AcquisitionServiceClient, CurrentStatusRequest,
     GetAcquisitionRunInfoRequest, MinknowStatus, StopRequest,
 };
+use crate::proto::minknow_api::data::{
+    data_service_client::DataServiceClient, GetChannelStatesRequest,
+};
+use crate::proto::minknow_api::device::{
+    device_service_client::DeviceServiceClient, GetChannelsLayoutRequest,
+};
 use crate::proto::minknow_api::statistics::{
-    statistics_service_client::StatisticsServiceClient, StreamAcquisitionOutputRequest,
+    statistics_service_client::StatisticsServiceClient, stream_boxplot_request, ReadLengthType,
+    StreamAcquisitionOutputRequest, StreamBoxplotRequest, StreamDutyTimeRequest,
+    StreamReadLengthHistogramRequest,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -41,6 +52,8 @@ pub struct PositionClient {
     pub position: Position,
     acquisition: AcquisitionServiceClient<InterceptedChannel>,
     statistics: StatisticsServiceClient<InterceptedChannel>,
+    data: DataServiceClient<InterceptedChannel>,
+    device: DeviceServiceClient<InterceptedChannel>,
 }
 
 impl PositionClient {
@@ -95,13 +108,18 @@ impl PositionClient {
         let interceptor = AuthInterceptor { token: auth_token };
         let acquisition =
             AcquisitionServiceClient::with_interceptor(channel.clone(), interceptor.clone());
-        let statistics = StatisticsServiceClient::with_interceptor(channel, interceptor);
+        let statistics =
+            StatisticsServiceClient::with_interceptor(channel.clone(), interceptor.clone());
+        let data = DataServiceClient::with_interceptor(channel.clone(), interceptor.clone());
+        let device = DeviceServiceClient::with_interceptor(channel, interceptor);
 
         tracing::info!(position = %position.name, "Connected to position services");
         Ok(Self {
             position,
             acquisition,
             statistics,
+            data,
+            device,
         })
     }
 
@@ -129,6 +147,8 @@ impl PositionClient {
     }
 
     pub async fn get_acquisition_info(&mut self) -> Result<AcquisitionInfo, ClientError> {
+        let state = self.get_run_state().await?;
+
         let response = self
             .acquisition
             .get_acquisition_info(GetAcquisitionRunInfoRequest::default())
@@ -138,15 +158,6 @@ impl PositionClient {
                 status,
             })?
             .into_inner();
-
-        let state = match MinknowStatus::try_from(response.state) {
-            Ok(MinknowStatus::Ready) => RunState::Idle,
-            Ok(MinknowStatus::Starting) => RunState::Starting,
-            Ok(MinknowStatus::Processing) => RunState::Running,
-            Ok(MinknowStatus::Finishing) => RunState::Finishing,
-            Ok(MinknowStatus::ErrorStatus) => RunState::Error("Unknown error".to_string()),
-            Err(_) => RunState::Idle,
-        };
 
         let yield_summary = response.yield_summary.as_ref();
 
@@ -172,16 +183,25 @@ impl PositionClient {
     pub async fn get_stats(&mut self) -> Result<StatsSnapshot, ClientError> {
         let info = self.get_acquisition_info().await?;
 
+        let total_bases = info.bases_passed + info.bases_failed;
+        let total_reads = info.reads_passed + info.reads_failed;
+
+        let mean_read_length = if total_reads > 0 {
+            total_bases as f64 / total_reads as f64
+        } else {
+            0.0
+        };
+
         Ok(StatsSnapshot {
             timestamp: None,
             reads_processed: info.reads_processed,
-            bases_called: info.bases_passed + info.bases_failed,
+            bases_called: total_bases,
             throughput_bps: 0.0,
             throughput_gbph: 0.0,
             reads_passed: info.reads_passed,
             reads_failed: info.reads_failed,
             mean_quality: 0.0,
-            mean_read_length: 0.0,
+            mean_read_length,
             active_pores: 0,
         })
     }
@@ -267,6 +287,348 @@ impl PositionClient {
                     status,
                 })
         }))
+    }
+
+    pub async fn get_yield_history(
+        &mut self,
+        run_id: &str,
+    ) -> Result<Vec<YieldDataPoint>, ClientError> {
+        use futures::StreamExt;
+
+        let request = StreamAcquisitionOutputRequest {
+            acquisition_run_id: run_id.to_string(),
+            ..Default::default()
+        };
+
+        let mut stream = self
+            .statistics
+            .stream_acquisition_output(request)
+            .await
+            .map_err(|status| ClientError::Grpc {
+                method: "stream_acquisition_output".into(),
+                status,
+            })?
+            .into_inner();
+
+        let mut points = Vec::new();
+
+        if let Some(Ok(response)) = stream.next().await {
+            for filtered in &response.snapshots {
+                for snapshot in &filtered.snapshots {
+                    if let Some(yield_summary) = &snapshot.yield_summary {
+                        let basecalled_reads = (yield_summary.basecalled_pass_read_count
+                            + yield_summary.basecalled_fail_read_count)
+                            as u64;
+                        let basecalled_bases = (yield_summary.basecalled_pass_bases
+                            + yield_summary.basecalled_fail_bases)
+                            as u64;
+
+                        points.push(YieldDataPoint {
+                            seconds: snapshot.seconds,
+                            reads: basecalled_reads,
+                            bases: basecalled_bases,
+                        });
+                    }
+                }
+            }
+        }
+
+        points.sort_by_key(|p| p.seconds);
+        points.dedup_by_key(|p| p.seconds);
+
+        Ok(points)
+    }
+
+    pub async fn stream_duty_time(
+        &mut self,
+        run_id: &str,
+    ) -> Result<impl futures::Stream<Item = Result<DutyTimeSnapshot, ClientError>>, ClientError>
+    {
+        use futures::StreamExt;
+        use std::collections::HashMap;
+
+        let request = StreamDutyTimeRequest {
+            acquisition_run_id: run_id.to_string(),
+            ..Default::default()
+        };
+
+        let stream = self
+            .statistics
+            .stream_duty_time(request)
+            .await
+            .map_err(|status| ClientError::Grpc {
+                method: "stream_duty_time".into(),
+                status,
+            })?
+            .into_inner();
+
+        Ok(stream.map(|result| {
+            result
+                .map(|response| {
+                    tracing::warn!(
+                        pore_occupancy_len = response.pore_occupancy.len(),
+                        channel_states_count = response.channel_states.len(),
+                        bucket_ranges_count = response.bucket_ranges.len(),
+                        "Raw duty time response"
+                    );
+
+                    if !response.pore_occupancy.is_empty() {
+                        let min = response.pore_occupancy.iter().cloned().fold(f32::INFINITY, f32::min);
+                        let max = response.pore_occupancy.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                        let sum: f32 = response.pore_occupancy.iter().sum();
+                        let avg = sum / response.pore_occupancy.len() as f32;
+                        tracing::warn!(min = %min, max = %max, avg = %format!("{:.3}", avg), "Occupancy stats");
+                    } else {
+                        tracing::warn!("pore_occupancy is EMPTY");
+                    }
+
+                    let mut snapshot = DutyTimeSnapshot::default();
+
+                    if let Some(range) = response.bucket_ranges.last() {
+                        snapshot.time_range = (range.start, range.end);
+                    }
+
+                    let mut state_times: HashMap<ChannelState, u64> = HashMap::new();
+                    for (name, data) in &response.channel_states {
+                        let state = match name.as_str() {
+                            "strand" | "sequencing" => ChannelState::Strand,
+                            "pore" | "single_pore" => ChannelState::Pore,
+                            "adapter" => ChannelState::Adapter,
+                            "unavailable" | "inactive" | "saturated" | "zero" | "multiple" => {
+                                ChannelState::Unavailable
+                            }
+                            "unblock" | "unblocking" => ChannelState::Unblock,
+                            _ => ChannelState::Other,
+                        };
+                        let total: u64 = data.state_times.iter().sum();
+                        *state_times.entry(state).or_insert(0) += total;
+                    }
+                    snapshot.state_times = state_times;
+                    snapshot.pore_occupancy = response.pore_occupancy;
+
+                    snapshot
+                })
+                .map_err(|status| ClientError::Grpc {
+                    method: "stream_duty_time".into(),
+                    status,
+                })
+        }))
+    }
+
+    pub async fn stream_read_length_histogram(
+        &mut self,
+        run_id: &str,
+        exclude_outliers: bool,
+    ) -> Result<impl futures::Stream<Item = Result<ReadLengthHistogram, ClientError>>, ClientError>
+    {
+        use futures::StreamExt;
+
+        let outlier_percent = if exclude_outliers { 0.01 } else { 0.0 };
+
+        let request = StreamReadLengthHistogramRequest {
+            acquisition_run_id: run_id.to_string(),
+            read_length_type: ReadLengthType::EstimatedBases as i32,
+            discard_outlier_percent: outlier_percent,
+            poll_time_seconds: 30,
+            ..Default::default()
+        };
+
+        let stream = self
+            .statistics
+            .stream_read_length_histogram(request)
+            .await
+            .map_err(|status| ClientError::Grpc {
+                method: "stream_read_length_histogram".into(),
+                status,
+            })?
+            .into_inner();
+
+        Ok(stream.map(move |result| {
+            result
+                .map(|response| {
+                    let bucket_ranges: Vec<(u64, u64)> = response
+                        .bucket_ranges
+                        .iter()
+                        .map(|r| (r.start, r.end))
+                        .collect();
+
+                    let (bucket_values, n50) = response
+                        .histogram_data
+                        .first()
+                        .map(|data| (data.bucket_values.clone(), data.n50))
+                        .unwrap_or_default();
+
+                    ReadLengthHistogram {
+                        bucket_ranges,
+                        bucket_values,
+                        n50,
+                        outliers_excluded: exclude_outliers,
+                        outlier_percent,
+                    }
+                })
+                .map_err(|status| ClientError::Grpc {
+                    method: "stream_read_length_histogram".into(),
+                    status,
+                })
+        }))
+    }
+
+    pub async fn get_mean_quality(&mut self, run_id: &str) -> Result<Option<f32>, ClientError> {
+        use futures::StreamExt;
+
+        let request = StreamBoxplotRequest {
+            acquisition_run_id: run_id.to_string(),
+            data_type: stream_boxplot_request::BoxplotType::Qscore as i32,
+            dataset_width: 10,
+            poll_time: 60,
+        };
+
+        let mut stream = self
+            .statistics
+            .stream_basecall_boxplots(request)
+            .await
+            .map_err(|status| ClientError::Grpc {
+                method: "stream_basecall_boxplots".into(),
+                status,
+            })?
+            .into_inner();
+
+        if let Some(Ok(response)) = stream.next().await {
+            if let Some(last_dataset) = response.datasets.last() {
+                return Ok(Some(last_dataset.q50));
+            }
+        }
+
+        Ok(None)
+    }
+
+    pub async fn get_channel_states(
+        &mut self,
+        channel_count: u32,
+    ) -> Result<super::ChannelStatesSnapshot, ClientError> {
+        use futures::StreamExt;
+        use std::collections::HashMap;
+
+        let request = GetChannelStatesRequest {
+            first_channel: 1,
+            last_channel: channel_count,
+            use_channel_states_ids: Some(false),
+            wait_for_processing: true,
+            ..Default::default()
+        };
+
+        let mut stream = self
+            .data
+            .get_channel_states(request)
+            .await
+            .map_err(|status| ClientError::Grpc {
+                method: "get_channel_states".into(),
+                status,
+            })?
+            .into_inner();
+
+        let mut state_counts: HashMap<String, usize> = HashMap::new();
+        let mut states: Vec<String> = vec![String::new(); channel_count as usize];
+
+        // Take only the first response - this is a streaming RPC that runs indefinitely
+        if let Some(result) = stream.next().await {
+            match result {
+                Ok(response) => {
+                    for channel_data in response.channel_states {
+                        let state_name = match channel_data.state {
+                            Some(crate::proto::minknow_api::data::get_channel_states_response::channel_state_data::State::StateName(name)) => name,
+                            Some(crate::proto::minknow_api::data::get_channel_states_response::channel_state_data::State::StateId(id)) => format!("state_{}", id),
+                            None => "unknown".to_string(),
+                        };
+
+                        let channel_idx = (channel_data.channel as usize).saturating_sub(1);
+                        if channel_idx < states.len() {
+                            states[channel_idx] = state_name.clone();
+                        }
+                        *state_counts.entry(state_name).or_insert(0) += 1;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Error in channel states stream");
+                }
+            }
+        }
+
+        tracing::info!(
+            channel_count = channel_count,
+            states_received = state_counts.values().sum::<usize>(),
+            unique_states = state_counts.len(),
+            "Got channel states"
+        );
+
+        for (state, count) in &state_counts {
+            tracing::debug!(state = %state, count = count, "Channel state count");
+        }
+
+        Ok(super::ChannelStatesSnapshot {
+            channel_count: channel_count as usize,
+            states,
+            state_counts,
+        })
+    }
+
+    pub async fn get_channel_layout(&mut self) -> Result<super::ChannelLayout, ClientError> {
+        use std::collections::BTreeSet;
+
+        let response = self
+            .device
+            .get_channels_layout(GetChannelsLayoutRequest {})
+            .await
+            .map_err(|status| ClientError::Grpc {
+                method: "get_channels_layout".into(),
+                status,
+            })?
+            .into_inner();
+
+        let channel_count = response.channel_records.len();
+        let mut raw_coords: Vec<(u32, u32)> = vec![(0, 0); channel_count];
+
+        let mut unique_x: BTreeSet<u32> = BTreeSet::new();
+        let mut unique_y: BTreeSet<u32> = BTreeSet::new();
+
+        for record in &response.channel_records {
+            let channel_idx = record.id.saturating_sub(1) as usize;
+            if channel_idx < channel_count {
+                if let Some(mux) = record.mux_records.first() {
+                    raw_coords[channel_idx] = (mux.phys_x, mux.phys_y);
+                    unique_x.insert(mux.phys_x);
+                    unique_y.insert(mux.phys_y);
+                }
+            }
+        }
+
+        let x_map: std::collections::HashMap<u32, u32> = unique_x
+            .iter()
+            .enumerate()
+            .map(|(idx, &val)| (val, idx as u32))
+            .collect();
+        let y_map: std::collections::HashMap<u32, u32> = unique_y
+            .iter()
+            .enumerate()
+            .map(|(idx, &val)| (val, idx as u32))
+            .collect();
+
+        let coords: Vec<(u32, u32)> = raw_coords
+            .iter()
+            .map(|(x, y)| {
+                (
+                    *x_map.get(x).unwrap_or(&0),
+                    *y_map.get(y).unwrap_or(&0),
+                )
+            })
+            .collect();
+
+        Ok(super::ChannelLayout {
+            channel_count,
+            width: unique_x.len() as u32,
+            height: unique_y.len() as u32,
+            coords,
+        })
     }
 }
 

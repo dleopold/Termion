@@ -205,6 +205,255 @@ impl StatsSnapshot {
     }
 }
 
+/// A time-series data point for yield tracking.
+#[derive(Debug, Clone, Default)]
+pub struct YieldDataPoint {
+    /// Seconds since start of acquisition.
+    pub seconds: u32,
+    /// Cumulative read count at this time.
+    pub reads: u64,
+    /// Cumulative bases at this time.
+    pub bases: u64,
+}
+
+/// Read length histogram data.
+#[derive(Debug, Clone, Default)]
+pub struct ReadLengthHistogram {
+    /// Bucket ranges as (start, end) pairs.
+    pub bucket_ranges: Vec<(u64, u64)>,
+    /// Bucket values (read counts or total lengths).
+    pub bucket_values: Vec<u64>,
+    /// N50 value for the histogram.
+    pub n50: f32,
+    /// Whether outliers were excluded.
+    pub outliers_excluded: bool,
+    /// Percentage of outliers excluded.
+    pub outlier_percent: f32,
+}
+
+impl ReadLengthHistogram {
+    /// Returns the maximum bucket value for scaling.
+    pub fn max_value(&self) -> u64 {
+        self.bucket_values.iter().copied().max().unwrap_or(0)
+    }
+
+    /// Returns the total count across all buckets.
+    pub fn total_count(&self) -> u64 {
+        self.bucket_values.iter().sum()
+    }
+}
+
+/// Channel state for duty time tracking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ChannelState {
+    /// Pore is sequencing (strand moving through).
+    Strand,
+    /// Pore is available but waiting.
+    Pore,
+    /// Adapter detected.
+    Adapter,
+    /// Channel is unavailable/blocked.
+    Unavailable,
+    /// Channel in recovery/unblock.
+    Unblock,
+    /// Other/unknown state.
+    Other,
+}
+
+impl ChannelState {
+    /// Returns a display label for this state.
+    pub fn label(&self) -> &'static str {
+        match self {
+            ChannelState::Strand => "Sequencing",
+            ChannelState::Pore => "Pore",
+            ChannelState::Adapter => "Adapter",
+            ChannelState::Unavailable => "Unavailable",
+            ChannelState::Unblock => "Unblock",
+            ChannelState::Other => "Other",
+        }
+    }
+
+    /// Returns a suggested color index for this state (ANSI color codes).
+    pub fn color_index(&self) -> u8 {
+        match self {
+            ChannelState::Strand => 2,
+            ChannelState::Pore => 4,
+            ChannelState::Adapter => 3,
+            ChannelState::Unavailable => 1,
+            ChannelState::Unblock => 5,
+            ChannelState::Other => 8,
+        }
+    }
+}
+
+/// Duty time data for channel states.
+#[derive(Debug, Clone, Default)]
+pub struct DutyTimeSnapshot {
+    /// Time range for this bucket (start, end) in seconds.
+    pub time_range: (u32, u32),
+    /// Map of channel state to time spent in that state (in samples).
+    pub state_times: std::collections::HashMap<ChannelState, u64>,
+    /// Pore occupancy values per channel (0.0-1.0).
+    pub pore_occupancy: Vec<f32>,
+}
+
+/// Pore category based on occupancy level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PoreCategory {
+    Sequencing,
+    PoreAvailable,
+    Inactive,
+    Unavailable,
+}
+
+impl PoreCategory {
+    pub fn from_occupancy(occupancy: f32) -> Self {
+        if occupancy >= 0.2 {
+            PoreCategory::Sequencing
+        } else if occupancy >= 0.05 {
+            PoreCategory::PoreAvailable
+        } else if occupancy > 0.0 {
+            PoreCategory::Inactive
+        } else {
+            PoreCategory::Unavailable
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            PoreCategory::Sequencing => "Sequencing",
+            PoreCategory::PoreAvailable => "Pore Available",
+            PoreCategory::Inactive => "Inactive",
+            PoreCategory::Unavailable => "Unavailable",
+        }
+    }
+
+    pub fn color_index(&self) -> u8 {
+        match self {
+            PoreCategory::Sequencing => 2,    // Green
+            PoreCategory::PoreAvailable => 4, // Blue
+            PoreCategory::Inactive => 8,      // Gray
+            PoreCategory::Unavailable => 0,   // Black/Dark
+        }
+    }
+}
+
+/// Counts of pores in each category.
+#[derive(Debug, Clone, Default)]
+pub struct PoreCounts {
+    pub sequencing: usize,
+    pub pore_available: usize,
+    pub inactive: usize,
+    pub unavailable: usize,
+}
+
+impl PoreCounts {
+    pub fn total(&self) -> usize {
+        self.sequencing + self.pore_available + self.inactive + self.unavailable
+    }
+}
+
+impl DutyTimeSnapshot {
+    pub fn total_pores(&self) -> usize {
+        self.pore_occupancy.len()
+    }
+
+    pub fn active_pores(&self, threshold: f32) -> usize {
+        self.pore_occupancy
+            .iter()
+            .filter(|&&occ| occ > threshold)
+            .count()
+    }
+
+    pub fn average_occupancy(&self) -> f32 {
+        if self.pore_occupancy.is_empty() {
+            0.0
+        } else {
+            self.pore_occupancy.iter().sum::<f32>() / self.pore_occupancy.len() as f32
+        }
+    }
+
+    pub fn pore_counts(&self) -> PoreCounts {
+        let mut counts = PoreCounts::default();
+        for &occupancy in &self.pore_occupancy {
+            match PoreCategory::from_occupancy(occupancy) {
+                PoreCategory::Sequencing => counts.sequencing += 1,
+                PoreCategory::PoreAvailable => counts.pore_available += 1,
+                PoreCategory::Inactive => counts.inactive += 1,
+                PoreCategory::Unavailable => counts.unavailable += 1,
+            }
+        }
+        counts
+    }
+
+    pub fn state_fractions(&self) -> std::collections::HashMap<ChannelState, f64> {
+        let total: u64 = self.state_times.values().sum();
+        if total == 0 {
+            return std::collections::HashMap::new();
+        }
+        self.state_times
+            .iter()
+            .map(|(&state, &time)| (state, time as f64 / total as f64))
+            .collect()
+    }
+}
+
+/// Physical layout of channels on the flow cell.
+#[derive(Debug, Clone, Default)]
+pub struct ChannelLayout {
+    pub channel_count: usize,
+    pub width: u32,
+    pub height: u32,
+    /// (x, y) coordinates for each channel, indexed by channel number (0-based).
+    pub coords: Vec<(u32, u32)>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ChannelStatesSnapshot {
+    pub channel_count: usize,
+    pub states: Vec<String>,
+    pub state_counts: std::collections::HashMap<String, usize>,
+}
+
+impl ChannelStatesSnapshot {
+    pub fn sequencing_count(&self) -> usize {
+        self.state_counts
+            .iter()
+            .filter(|(name, _)| {
+                let n = name.to_lowercase();
+                n.contains("strand") || n.contains("sequencing") || n == "pore"
+            })
+            .map(|(_, count)| count)
+            .sum()
+    }
+
+    pub fn pore_available_count(&self) -> usize {
+        self.state_counts
+            .iter()
+            .filter(|(name, _)| {
+                let n = name.to_lowercase();
+                n.contains("single_pore") || n.contains("pore_available") || n == "pore"
+            })
+            .map(|(_, count)| count)
+            .sum()
+    }
+
+    pub fn unavailable_count(&self) -> usize {
+        self.state_counts
+            .iter()
+            .filter(|(name, _)| {
+                let n = name.to_lowercase();
+                n.contains("unavailable")
+                    || n.contains("saturated")
+                    || n.contains("zero")
+                    || n.contains("multiple")
+                    || n.contains("inactive")
+            })
+            .map(|(_, count)| count)
+            .sum()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

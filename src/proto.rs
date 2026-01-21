@@ -56,4 +56,8 @@ pub mod minknow_api {
     pub mod statistics {
         tonic::include_proto!("minknow_api.statistics");
     }
+
+    pub mod data {
+        tonic::include_proto!("minknow_api.data");
+    }
 }
