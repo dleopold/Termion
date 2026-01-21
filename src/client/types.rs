@@ -230,19 +230,17 @@ pub struct YieldDataPoint {
     pub bases_failed: u64,
 }
 
-/// Read length histogram data.
 #[derive(Debug, Clone, Default)]
 pub struct ReadLengthHistogram {
-    /// Bucket ranges as (start, end) pairs.
     pub bucket_ranges: Vec<(u64, u64)>,
-    /// Bucket values (read counts or total lengths).
     pub bucket_values: Vec<u64>,
-    /// N50 value for the histogram.
     pub n50: f32,
-    /// Whether outliers were excluded.
     pub outliers_excluded: bool,
-    /// Percentage of outliers excluded.
     pub outlier_percent: f32,
+    /// The requested range (min, max) if a specific range was requested, None for full range.
+    pub requested_range: Option<(u64, u64)>,
+    /// The actual data range end (source_data_end from response).
+    pub source_data_end: u64,
 }
 
 impl ReadLengthHistogram {

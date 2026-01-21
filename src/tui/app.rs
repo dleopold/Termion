@@ -39,6 +39,7 @@ pub enum Overlay {
     None,
     Help,
     Error { message: String },
+    RangeInput { max_input: String },
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +64,9 @@ pub struct App {
     pub detail_chart: DetailChart,
     pub yield_unit: YieldUnit,
     pub exclude_outliers: bool,
+    /// Optional user-specified range for read length histogram (min, max) in bases.
+    /// When set, the API will be queried with this range to get finer bins.
+    pub histogram_range: Option<(u64, u64)>,
     pub yield_history: HashMap<String, Vec<YieldDataPoint>>,
     pub histograms: HashMap<String, ReadLengthHistogram>,
     pub duty_time: HashMap<String, DutyTimeSnapshot>,
@@ -110,7 +114,8 @@ impl App {
             last_error: None,
             detail_chart: DetailChart::default(),
             yield_unit: YieldUnit::default(),
-            exclude_outliers: false,
+            exclude_outliers: true,
+            histogram_range: None,
             yield_history: HashMap::new(),
             histograms: HashMap::new(),
             duty_time: HashMap::new(),
@@ -248,6 +253,83 @@ impl App {
 
     pub fn toggle_outliers(&mut self) {
         self.exclude_outliers = !self.exclude_outliers;
+        tracing::info!(exclude_outliers = self.exclude_outliers, "Toggled outliers");
+    }
+
+    pub fn set_histogram_range(&mut self, min: u64, max: u64) {
+        if min < max {
+            self.histogram_range = Some((min, max));
+            tracing::info!(min, max, "Set histogram range");
+        }
+    }
+
+    pub fn clear_histogram_range(&mut self) {
+        self.histogram_range = None;
+    }
+
+    pub fn has_histogram_range(&self) -> bool {
+        self.histogram_range.is_some()
+    }
+
+    pub fn open_range_input(&mut self) {
+        if self.detail_chart != DetailChart::ReadLength {
+            return;
+        }
+
+        let max_str = match self.histogram_range {
+            Some((_, max)) => max.to_string(),
+            None => String::new(),
+        };
+
+        self.overlay = Overlay::RangeInput { max_input: max_str };
+    }
+
+    pub fn apply_range_input(&mut self) -> bool {
+        if let Overlay::RangeInput { ref max_input, .. } = self.overlay {
+            let max_input = max_input.clone();
+
+            if max_input.is_empty() {
+                self.histogram_range = None;
+                self.overlay = Overlay::None;
+                return true;
+            }
+
+            if let Ok(max_val) = max_input.parse::<u64>() {
+                if max_val > 0 {
+                    self.histogram_range = Some((0, max_val));
+                    self.overlay = Overlay::None;
+                    tracing::info!(max = max_val, "Applied histogram max range");
+                    return true;
+                }
+            }
+            tracing::warn!("Invalid range input");
+            return false;
+        }
+        false
+    }
+
+    pub fn handle_range_input_key(&mut self, key_code: crossterm::event::KeyCode) {
+        use crossterm::event::KeyCode;
+
+        if let Overlay::RangeInput { ref mut max_input } = self.overlay {
+            match key_code {
+                KeyCode::Char(c) if c.is_ascii_digit() => {
+                    max_input.push(c);
+                }
+                KeyCode::Backspace => {
+                    max_input.pop();
+                }
+                KeyCode::Up => {
+                    let current: u64 = max_input.parse().unwrap_or(0);
+                    *max_input = (current + 1000).to_string();
+                }
+                KeyCode::Down => {
+                    let current: u64 = max_input.parse().unwrap_or(0);
+                    *max_input = current.saturating_sub(1000).to_string();
+                }
+                _ => {}
+            }
+        }
     }
 
     pub fn update_yield_history(&mut self, position_name: &str, data: Vec<YieldDataPoint>) {
@@ -490,13 +572,13 @@ mod tests {
     #[test]
     fn test_toggle_outliers() {
         let mut app = App::new(test_config());
-        assert!(!app.exclude_outliers);
-
-        app.toggle_outliers();
         assert!(app.exclude_outliers);
 
         app.toggle_outliers();
         assert!(!app.exclude_outliers);
+
+        app.toggle_outliers();
+        assert!(app.exclude_outliers);
     }
 
     #[test]
@@ -535,6 +617,8 @@ mod tests {
             n50: 1500.0,
             outliers_excluded: false,
             outlier_percent: 0.0,
+            requested_range: None,
+            source_data_end: 2000,
         };
         app.update_histogram("X1", histogram);
         assert!(app.histograms.contains_key("X1"));

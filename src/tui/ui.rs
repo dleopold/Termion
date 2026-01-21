@@ -27,12 +27,23 @@ pub fn render(frame: &mut Frame, app: &App) {
         }
     }
 
-    if let Some(overlay_area) = centered_rect(60, 60, area) {
-        match &app.overlay {
-            Overlay::Help => render_help_overlay(frame, overlay_area),
-            Overlay::Error { message } => render_error_overlay(frame, message, overlay_area),
-            Overlay::None => {}
+    match &app.overlay {
+        Overlay::Help => {
+            if let Some(help_area) = centered_rect(50, 45, area) {
+                render_help_overlay(frame, help_area);
+            }
         }
+        Overlay::Error { message } => {
+            if let Some(error_area) = centered_rect(50, 30, area) {
+                render_error_overlay(frame, message, error_area);
+            }
+        }
+        Overlay::RangeInput { max_input } => {
+            if let Some(range_area) = centered_rect(35, 18, area) {
+                render_range_input_overlay(frame, max_input, range_area);
+            }
+        }
+        Overlay::None => {}
     }
 }
 
@@ -180,20 +191,13 @@ fn render_footer(frame: &mut Frame, _app: &App, area: Rect) {
 
 fn render_detail_footer(frame: &mut Frame, app: &App, area: Rect) {
     let chart_hints = match app.detail_chart {
-        DetailChart::Yield => {
-            let unit = match app.yield_unit {
-                YieldUnit::Bases => "bases",
-                YieldUnit::Reads => "reads",
-            };
-            format!("[b] Toggle ({})  ", unit)
-        }
+        DetailChart::Yield => "[t] Reads/Bases  ".to_string(),
         DetailChart::ReadLength => {
-            let outliers = if app.exclude_outliers {
-                "excluding"
-            } else {
-                "including"
+            let range_status = match app.histogram_range {
+                Some((min, max)) => format!(" ({}-{} bp) [0] Clear", min, max),
+                None => String::new(),
             };
-            format!("[o] Outliers ({})  ", outliers)
+            format!("[o] Outliers  [z] Set Range{}  ", range_status)
         }
         DetailChart::PoreActivity => String::new(),
     };
@@ -233,13 +237,20 @@ fn render_position_detail(frame: &mut Frame, app: &App, position_idx: usize, are
         .split(area);
 
     render_detail_header(frame, position, chunks[0]);
-    render_run_info(frame, position, stats, chunks[1]);
+    let histogram = app.histograms.get(&position.name);
+    render_run_info(frame, position, stats, histogram, chunks[1]);
 
     match app.detail_chart {
         DetailChart::Yield => render_yield_chart(frame, app, &position.name, chunks[2]),
         DetailChart::ReadLength => {
             let histogram = app.histograms.get(&position.name);
-            render_histogram_chart(frame, histogram, app.exclude_outliers, chunks[2]);
+            render_histogram_chart(
+                frame,
+                histogram,
+                app.exclude_outliers,
+                app.histogram_range,
+                chunks[2],
+            );
         }
         DetailChart::PoreActivity => {
             let channel_states = app.channel_states.get(&position.name);
@@ -288,8 +299,14 @@ fn render_run_info(
     frame: &mut Frame,
     _position: &Position,
     stats: Option<&StatsSnapshot>,
+    histogram: Option<&ReadLengthHistogram>,
     area: Rect,
 ) {
+    let n50_text = histogram
+        .filter(|h| h.n50 > 0.0)
+        .map(|h| format!("{} bp", format_number(h.n50 as u64)))
+        .unwrap_or_else(|| "-".to_string());
+
     let content = if let Some(s) = stats {
         vec![
             Line::from(vec![
@@ -343,6 +360,9 @@ fn render_run_info(
                     format_number(s.active_pores as u64),
                     Style::default().bold(),
                 ),
+                Span::raw("    "),
+                Span::styled("N50: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(n50_text, Style::default().bold()),
             ]),
         ]
     } else {
@@ -370,7 +390,7 @@ fn render_yield_chart(frame: &mut Frame, app: &App, position_name: &str, area: R
                 .alignment(Alignment::Center)
                 .block(
                     Block::default()
-                        .title(" Cumulative Yield [1] ")
+                        .title(" Cumulative Yield ")
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::Cyan)),
                 );
@@ -493,7 +513,7 @@ fn render_yield_chart(frame: &mut Frame, app: &App, position_name: &str, area: R
     let chart = Chart::new(datasets)
         .block(
             Block::default()
-                .title(format!(" {} [1] ", title))
+                .title(format!(" {} ", title))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Cyan)),
         )
@@ -522,12 +542,23 @@ fn render_histogram_chart(
     frame: &mut Frame,
     histogram: Option<&ReadLengthHistogram>,
     exclude_outliers: bool,
+    histogram_range: Option<(u64, u64)>,
     area: Rect,
 ) {
-    let title = if exclude_outliers {
-        " Read Length Distribution (outliers excluded) [2] "
-    } else {
-        " Read Length Distribution [2] "
+    let base_title = " Read Length Distribution ";
+    let title = match (exclude_outliers, histogram_range) {
+        (true, Some((min, max))) => format!(
+            " Read Length ({}-{} bp, outliers excluded) ",
+            format_number(min),
+            format_number(max)
+        ),
+        (false, Some((min, max))) => format!(
+            " Read Length ({}-{} bp) ",
+            format_number(min),
+            format_number(max)
+        ),
+        (true, None) => " Read Length Distribution (outliers excluded) ".to_string(),
+        (false, None) => base_title.to_string(),
     };
 
     let histogram = match histogram {
@@ -548,42 +579,108 @@ fn render_histogram_chart(
     };
 
     let max_count = histogram.max_value();
-    let num_buckets = histogram.bucket_values.len().min(20);
+    let num_buckets = histogram.bucket_values.len();
+
+    let y_max_rounded = if max_count > 1000 {
+        ((max_count / 1000) + 1) * 1000
+    } else if max_count > 100 {
+        ((max_count / 100) + 1) * 100
+    } else {
+        ((max_count / 10) + 1) * 10
+    }
+    .max(10);
+
+    let x_min = histogram
+        .bucket_ranges
+        .first()
+        .map(|(s, _)| *s)
+        .unwrap_or(0);
+    let x_max = histogram
+        .bucket_ranges
+        .last()
+        .map(|(_, e)| *e)
+        .unwrap_or(10000);
+
+    let range_label = format!(" {} - {} bp ", format_number(x_min), format_number(x_max));
+
+    let layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(7), Constraint::Min(10)])
+        .split(area);
+
+    let y_axis_area = layout[0];
+    let chart_area = layout[1];
+
+    let chart_height = chart_area.height.saturating_sub(3) as usize;
+    let mut y_axis_lines: Vec<Line> = Vec::new();
+
+    y_axis_lines.push(Line::from(""));
+
+    if chart_height >= 6 {
+        y_axis_lines.push(Line::from(Span::styled(
+            format!("{:>6}", format_number(y_max_rounded)),
+            Style::default().fg(Color::DarkGray),
+        )));
+        for _ in 0..(chart_height.saturating_sub(3) / 2) {
+            y_axis_lines.push(Line::from(""));
+        }
+        y_axis_lines.push(Line::from(Span::styled(
+            format!("{:>6}", format_number(y_max_rounded / 2)),
+            Style::default().fg(Color::DarkGray),
+        )));
+        for _ in 0..(chart_height.saturating_sub(3) / 2) {
+            y_axis_lines.push(Line::from(""));
+        }
+        y_axis_lines.push(Line::from(Span::styled(
+            format!("{:>6}", "0"),
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        y_axis_lines.push(Line::from(Span::styled(
+            format!("{:>6}", format_number(y_max_rounded)),
+            Style::default().fg(Color::DarkGray),
+        )));
+        y_axis_lines.push(Line::from(""));
+        y_axis_lines.push(Line::from(Span::styled(
+            format!("{:>6}", "0"),
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    let y_axis = Paragraph::new(y_axis_lines).alignment(Alignment::Right);
+    frame.render_widget(y_axis, y_axis_area);
+
+    let inner_width = chart_area.width.saturating_sub(2) as usize;
+    let total_space_per_bar = inner_width / num_buckets;
+    let bar_width: u16 = total_space_per_bar.saturating_sub(1).clamp(1, 4) as u16;
+    let bar_gap: u16 = 1;
 
     let bars: Vec<Bar> = histogram
-        .bucket_ranges
+        .bucket_values
         .iter()
-        .zip(histogram.bucket_values.iter())
-        .take(num_buckets)
-        .map(|((start, end), &count)| {
-            let label = if *end >= 10000 {
-                format!("{}k", start / 1000)
-            } else {
-                format!("{}", start)
-            };
+        .map(|&count| {
             Bar::default()
                 .value(count)
-                .label(Line::from(label))
+                .label(Line::from(""))
+                .text_value(String::new())
                 .style(Style::default().fg(Color::Magenta))
         })
         .collect();
-
-    let n50_info = format!("N50: {} bp", format_number(histogram.n50 as u64));
 
     let bar_chart = BarChart::default()
         .block(
             Block::default()
                 .title(title)
-                .title_bottom(Line::from(n50_info).alignment(Alignment::Right))
+                .title_bottom(Line::from(range_label).alignment(Alignment::Center))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Magenta)),
         )
         .data(BarGroup::default().bars(&bars))
-        .bar_width(3)
-        .bar_gap(1)
-        .max(max_count);
+        .bar_width(bar_width)
+        .bar_gap(bar_gap)
+        .max(y_max_rounded);
 
-    frame.render_widget(bar_chart, area);
+    frame.render_widget(bar_chart, chart_area);
 }
 
 fn render_pore_activity(
@@ -823,48 +920,83 @@ fn format_time_label(seconds: f64) -> String {
 }
 
 fn render_help_overlay(frame: &mut Frame, area: Rect) {
+    let key_style = Style::default().fg(Color::Yellow).bold();
+    let desc_style = Style::default().fg(Color::White);
+    let section_style = Style::default().fg(Color::Cyan).bold();
+    let dim_style = Style::default().fg(Color::DarkGray);
+
     let help_text = vec![
-        Line::from(Span::styled(
-            "Help",
-            Style::default().bold().fg(Color::Cyan),
-        )),
         Line::from(""),
-        Line::from(Span::styled("Navigation", Style::default().bold())),
-        Line::from("  ↑/↓        Move selection"),
-        Line::from("  Enter      Select / Drill down"),
-        Line::from("  Esc        Back / Close"),
+        Line::from(vec![
+            Span::styled("─── ", dim_style),
+            Span::styled("Navigation", section_style),
+            Span::styled(" ───", dim_style),
+        ]),
         Line::from(""),
-        Line::from(Span::styled("Detail View", Style::default().bold())),
-        Line::from("  1          Yield chart"),
-        Line::from("  2          Read length histogram"),
-        Line::from("  3          Pore activity"),
-        Line::from("  Tab        Cycle charts"),
-        Line::from("  b          Toggle bases/reads"),
-        Line::from("  o          Toggle outlier exclusion"),
+        Line::from(vec![
+            Span::styled("  ↑ ↓ ", key_style),
+            Span::styled("Move", desc_style),
+            Span::styled("   Enter ", key_style),
+            Span::styled("Select", desc_style),
+            Span::styled("   Esc ", key_style),
+            Span::styled("Back", desc_style),
+        ]),
         Line::from(""),
-        Line::from(Span::styled("Actions", Style::default().bold())),
-        Line::from("  p          Pause acquisition"),
-        Line::from("  r          Resume acquisition"),
-        Line::from("  s          Stop acquisition"),
-        Line::from("  R          Force refresh"),
+        Line::from(vec![
+            Span::styled("─── ", dim_style),
+            Span::styled("Charts", section_style),
+            Span::styled(" ───", dim_style),
+        ]),
         Line::from(""),
-        Line::from(Span::styled("General", Style::default().bold())),
-        Line::from("  ?          Toggle help"),
-        Line::from("  q          Quit"),
+        Line::from(vec![
+            Span::styled("  1 ", key_style),
+            Span::styled("Yield", desc_style),
+            Span::styled("   2 ", key_style),
+            Span::styled("Read Length", desc_style),
+            Span::styled("   3 ", key_style),
+            Span::styled("Pore Activity", desc_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  Tab ", key_style),
+            Span::styled("Cycle charts", desc_style),
+        ]),
         Line::from(""),
-        Line::from(Span::styled(
-            "[Esc] Close",
-            Style::default().fg(Color::DarkGray),
-        )),
+        Line::from(vec![
+            Span::styled("─── ", dim_style),
+            Span::styled("Run Control", section_style),
+            Span::styled(" ───", dim_style),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  p ", key_style),
+            Span::styled("Pause", desc_style),
+            Span::styled("   r ", key_style),
+            Span::styled("Resume", desc_style),
+            Span::styled("   s ", key_style),
+            Span::styled("Stop", desc_style),
+            Span::styled("   R ", key_style),
+            Span::styled("Refresh", desc_style),
+        ]),
+        Line::from(""),
+        Line::from(vec![Span::styled("───────────────────────", dim_style)]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  ? ", key_style),
+            Span::styled("Help", desc_style),
+            Span::styled("   q ", key_style),
+            Span::styled("Quit", desc_style),
+        ]),
+        Line::from(""),
     ];
 
     let help = Paragraph::new(help_text)
         .alignment(Alignment::Center)
         .block(
             Block::default()
-                .title(" Help ")
+                .title(" Keyboard Shortcuts ")
+                .title_style(Style::default().fg(Color::Cyan).bold())
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Yellow))
+                .border_style(Style::default().fg(Color::DarkGray))
                 .style(Style::default().bg(Color::Black)),
         );
 
@@ -900,6 +1032,43 @@ fn render_error_overlay(frame: &mut Frame, message: &str, area: Rect) {
     frame.render_widget(error, area);
 }
 
+fn render_range_input_overlay(frame: &mut Frame, max_input: &str, area: Rect) {
+    let max_display = if max_input.is_empty() {
+        "(empty = full range)".to_string()
+    } else {
+        format!("{} bp", max_input)
+    };
+
+    let content = vec![
+        Line::from(Span::styled(
+            "Set Max Read Length",
+            Style::default().bold().fg(Color::Cyan),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Max: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(max_display, Style::default().fg(Color::Yellow).bold()),
+            Span::styled("_", Style::default().fg(Color::Yellow)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Type number | ↑/↓ ±1000 | Enter | Esc",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    let dialog = Paragraph::new(content).alignment(Alignment::Center).block(
+        Block::default()
+            .title(" Range ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Magenta))
+            .style(Style::default().bg(Color::Black)),
+    );
+
+    frame.render_widget(ratatui::widgets::Clear, area);
+    frame.render_widget(dialog, area);
+}
+
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Option<Rect> {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
@@ -924,11 +1093,26 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Option<Rect> {
 
 fn format_number(n: u64) -> String {
     if n >= 1_000_000_000 {
-        format!("{:.2}B", n as f64 / 1_000_000_000.0)
+        let val = n as f64 / 1_000_000_000.0;
+        if val.fract() == 0.0 {
+            format!("{}B", val as u64)
+        } else {
+            format!("{:.1}B", val)
+        }
     } else if n >= 1_000_000 {
-        format!("{:.2}M", n as f64 / 1_000_000.0)
+        let val = n as f64 / 1_000_000.0;
+        if val.fract() == 0.0 {
+            format!("{}M", val as u64)
+        } else {
+            format!("{:.1}M", val)
+        }
     } else if n >= 1_000 {
-        format!("{:.2}K", n as f64 / 1_000.0)
+        let val = n as f64 / 1_000.0;
+        if val.fract() == 0.0 {
+            format!("{}K", val as u64)
+        } else {
+            format!("{:.1}K", val)
+        }
     } else {
         n.to_string()
     }

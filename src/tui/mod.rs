@@ -83,11 +83,30 @@ async fn run_app(
         if let Some(event) = events.next().await {
             match event {
                 Event::Key(key) => {
-                    let action = Action::from(key);
-                    handle_action(&mut app, action, &mut client, &config).await;
+                    if matches!(app.overlay, Overlay::RangeInput { .. }) {
+                        use crossterm::event::KeyCode;
+                        match key.code {
+                            KeyCode::Esc => {
+                                app.overlay = Overlay::None;
+                            }
+                            KeyCode::Enter => {
+                                if app.apply_range_input() {
+                                    if let Some(ref mut c) = client {
+                                        trigger_histogram_refresh(&mut app, c).await;
+                                    }
+                                }
+                            }
+                            other => {
+                                app.handle_range_input_key(other);
+                            }
+                        }
+                    } else {
+                        let action = Action::from(key);
+                        handle_action(&mut app, action, &mut client, &config).await;
 
-                    if matches!(action, Action::Refresh) && client.is_none() {
-                        reconnect_attempt = 0;
+                        if matches!(action, Action::Refresh) && client.is_none() {
+                            reconnect_attempt = 0;
+                        }
                     }
                 }
                 Event::Tick => {
@@ -166,6 +185,9 @@ async fn handle_action(
     client: &mut Option<Client>,
     config: &Config,
 ) {
+    if action != Action::None {
+        tracing::debug!(?action, "Handling action");
+    }
     match action {
         Action::Quit => app.quit(),
         Action::Up => app.select_previous(),
@@ -200,11 +222,23 @@ async fn handle_action(
             // TODO: Implement run control actions
         }
         Action::ToggleYieldUnit => app.toggle_yield_unit(),
-        Action::ToggleOutliers => app.toggle_outliers(),
+        Action::ToggleOutliers => {
+            app.toggle_outliers();
+            if let Some(ref mut c) = client {
+                trigger_histogram_refresh(app, c).await;
+            }
+        }
         Action::ChartYield => app.set_detail_chart(DetailChart::Yield),
         Action::ChartReadLength => app.set_detail_chart(DetailChart::ReadLength),
         Action::ChartPoreActivity => app.set_detail_chart(DetailChart::PoreActivity),
         Action::CycleChart => app.cycle_detail_chart(),
+        Action::HistogramSetRange => app.open_range_input(),
+        Action::HistogramResetRange => {
+            app.clear_histogram_range();
+            if let Some(ref mut c) = client {
+                trigger_histogram_refresh(app, c).await;
+            }
+        }
         Action::None => {}
     }
 }
@@ -287,13 +321,26 @@ async fn fetch_detail_data(app: &mut App, pos_client: &mut crate::client::Positi
 
     use futures::StreamExt;
 
+    tracing::info!(
+        position = %position_name,
+        exclude_outliers = app.exclude_outliers,
+        range = ?app.histogram_range,
+        "Fetching histogram"
+    );
+
     match pos_client
-        .stream_read_length_histogram(&run_id, app.exclude_outliers)
+        .stream_read_length_histogram(&run_id, app.exclude_outliers, app.histogram_range)
         .await
     {
         Ok(mut stream) => {
             if let Some(Ok(histogram)) = stream.next().await {
-                tracing::debug!(position = %position_name, buckets = histogram.bucket_values.len(), "Got histogram");
+                tracing::info!(
+                    position = %position_name,
+                    buckets = histogram.bucket_values.len(),
+                    requested_range = ?histogram.requested_range,
+                    source_data_end = histogram.source_data_end,
+                    "Got histogram"
+                );
                 app.update_histogram(&position_name, histogram);
             }
         }
@@ -377,6 +424,54 @@ async fn fetch_detail_data(app: &mut App, pos_client: &mut crate::client::Positi
             Err(e) => {
                 tracing::debug!(position = %position_name, error = %e.display_message(), "Channel layout failed");
             }
+        }
+    }
+}
+
+async fn trigger_histogram_refresh(app: &mut App, client: &mut Client) {
+    let position = match app.selected_position() {
+        Some(p) => p.clone(),
+        None => return,
+    };
+
+    let mut pos_client = match client.connect_position(position.clone()).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(error = %e.display_message(), "Failed to connect for histogram refresh");
+            return;
+        }
+    };
+
+    let run_id = match pos_client.get_current_run_id().await {
+        Ok(Some(id)) => id,
+        Ok(None) => return,
+        Err(_) => return,
+    };
+
+    tracing::info!(
+        position = %position.name,
+        exclude_outliers = app.exclude_outliers,
+        range = ?app.histogram_range,
+        "Immediate histogram refresh"
+    );
+
+    match pos_client
+        .stream_read_length_histogram(&run_id, app.exclude_outliers, app.histogram_range)
+        .await
+    {
+        Ok(mut stream) => {
+            use futures::StreamExt;
+            if let Some(Ok(histogram)) = stream.next().await {
+                tracing::info!(
+                    position = %position.name,
+                    buckets = histogram.bucket_values.len(),
+                    "Got histogram (immediate)"
+                );
+                app.update_histogram(&position.name, histogram);
+            }
+        }
+        Err(e) => {
+            tracing::debug!(error = %e.display_message(), "Histogram refresh failed");
         }
     }
 }

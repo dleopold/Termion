@@ -15,8 +15,8 @@ use crate::proto::minknow_api::device::{
     device_service_client::DeviceServiceClient, GetChannelsLayoutRequest,
 };
 use crate::proto::minknow_api::statistics::{
-    statistics_service_client::StatisticsServiceClient, stream_boxplot_request, ReadLengthType,
-    StreamAcquisitionOutputRequest, StreamBoxplotRequest, StreamDutyTimeRequest,
+    statistics_service_client::StatisticsServiceClient, stream_boxplot_request, DataSelection,
+    ReadLengthType, StreamAcquisitionOutputRequest, StreamBoxplotRequest, StreamDutyTimeRequest,
     StreamReadLengthHistogramRequest,
 };
 use std::sync::Arc;
@@ -424,17 +424,25 @@ impl PositionClient {
         &mut self,
         run_id: &str,
         exclude_outliers: bool,
+        range: Option<(u64, u64)>,
     ) -> Result<impl futures::Stream<Item = Result<ReadLengthHistogram, ClientError>>, ClientError>
     {
         use futures::StreamExt;
 
         let outlier_percent = if exclude_outliers { 0.01 } else { 0.0 };
 
+        let data_selection = range.map(|(min, max)| DataSelection {
+            start: min as i64,
+            end: max as i64,
+            step: 0,
+        });
+
         let request = StreamReadLengthHistogramRequest {
             acquisition_run_id: run_id.to_string(),
             read_length_type: ReadLengthType::EstimatedBases as i32,
             discard_outlier_percent: outlier_percent,
             poll_time_seconds: 30,
+            data_selection,
             ..Default::default()
         };
 
@@ -469,6 +477,8 @@ impl PositionClient {
                         n50,
                         outliers_excluded: exclude_outliers,
                         outlier_percent,
+                        requested_range: range,
+                        source_data_end: response.source_data_end,
                     }
                 })
                 .map_err(|status| ClientError::Grpc {

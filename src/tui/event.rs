@@ -68,6 +68,8 @@ pub enum Action {
     ChartReadLength,
     ChartPoreActivity,
     CycleChart,
+    HistogramSetRange,
+    HistogramResetRange,
     None,
 }
 
@@ -85,12 +87,14 @@ impl From<KeyEvent> for Action {
             KeyCode::Char('p') => Action::Pause,
             KeyCode::Char('r') => Action::Resume,
             KeyCode::Char('s') => Action::Stop,
-            KeyCode::Char('b') => Action::ToggleYieldUnit,
+            KeyCode::Char('t') => Action::ToggleYieldUnit,
             KeyCode::Char('o') => Action::ToggleOutliers,
             KeyCode::Char('1') => Action::ChartYield,
             KeyCode::Char('2') => Action::ChartReadLength,
             KeyCode::Char('3') => Action::ChartPoreActivity,
             KeyCode::Tab => Action::CycleChart,
+            KeyCode::Char('z') => Action::HistogramSetRange,
+            KeyCode::Char('0') => Action::HistogramResetRange,
             _ => Action::None,
         }
     }
