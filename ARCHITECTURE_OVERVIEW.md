@@ -295,7 +295,6 @@ pub enum ClientError {
 | Document | Purpose |
 |----------|---------|
 | [DECISIONS.md](DECISIONS.md) | Design decisions log |
-| [WORK_PLAN.md](WORK_PLAN.md) | Phase plan and deliverables |
 | [specs/SPEC_CLIENT.md](specs/SPEC_CLIENT.md) | gRPC client specification |
 | [specs/SPEC_TUI.md](specs/SPEC_TUI.md) | TUI specification |
 | [specs/SPEC_CLI.md](specs/SPEC_CLI.md) | CLI specification |

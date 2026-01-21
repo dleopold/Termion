@@ -19,7 +19,6 @@ Termion is both a product and a learning opportunity. These documents capture:
 | 2 | `PHASE_2_TUI.md` | TUI architecture, ratatui, immediate mode rendering, event loops, widget patterns |
 | 3 | `PHASE_3_CLI.md` | CLI design, clap, output formatting, exit codes |
 | 4 | `PHASE_4_TESTING.md` | Rust testing, mocking, integration tests, CI |
-| 5 | `PHASE_5_RELEASE.md` | Packaging, versioning, distribution |
 
 ## Document Structure
 
