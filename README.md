@@ -47,8 +47,14 @@ A showcase-quality TUI for monitoring Oxford Nanopore MinKNOW sequencing runs. B
 
 ## Screenshots
 
-<!-- TODO: Add screenshots here -->
-<!-- Recommended: Overview screen, Detail view with charts, Pore activity panel -->
+### Yield Chart
+![Yield Chart](assets/details-yield.png)
+
+### Read Length Distribution
+![Read Length Distribution](assets/details-lengths.png)
+
+### Channel Activity
+![Channel Activity](assets/details-channels.png)
 
 ---
 
