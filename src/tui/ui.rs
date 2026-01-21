@@ -408,11 +408,6 @@ fn render_yield_chart(frame: &mut Frame, app: &App, position_name: &str, area: R
         }
     };
 
-    let (title, unit_label, scale_factor): (&str, &str, f64) = match app.yield_unit {
-        YieldUnit::Bases => ("Cumulative Yield (Gb)", "Gb", 1_000_000_000.0),
-        YieldUnit::Reads => ("Cumulative Yield (M reads)", "M", 1_000_000.0),
-    };
-
     let min_x = yield_points
         .first()
         .map(|p| p.seconds as f64)
@@ -423,6 +418,39 @@ fn render_yield_chart(frame: &mut Frame, app: &App, position_name: &str, area: R
     let (get_total, get_passed, get_failed): (ValueFn, ValueFn, ValueFn) = match app.yield_unit {
         YieldUnit::Bases => (|p| p.bases, |p| p.bases_passed, |p| p.bases_failed),
         YieldUnit::Reads => (|p| p.reads, |p| p.reads_passed, |p| p.reads_failed),
+    };
+
+    let max_raw_value = yield_points
+        .iter()
+        .map(|p| get_total(p).max(get_passed(p)).max(get_failed(p)))
+        .max()
+        .unwrap_or(0) as f64;
+
+    let (title, scale_factor): (&str, f64) = match app.yield_unit {
+        YieldUnit::Bases => {
+            if max_raw_value >= 1_000_000_000_000.0 {
+                ("Cumulative Yield (Tb)", 1_000_000_000_000.0)
+            } else if max_raw_value >= 1_000_000_000.0 {
+                ("Cumulative Yield (Gb)", 1_000_000_000.0)
+            } else if max_raw_value >= 1_000_000.0 {
+                ("Cumulative Yield (Mb)", 1_000_000.0)
+            } else if max_raw_value >= 1_000.0 {
+                ("Cumulative Yield (Kb)", 1_000.0)
+            } else {
+                ("Cumulative Yield (b)", 1.0)
+            }
+        }
+        YieldUnit::Reads => {
+            if max_raw_value >= 1_000_000_000.0 {
+                ("Cumulative Yield (B reads)", 1_000_000_000.0)
+            } else if max_raw_value >= 1_000_000.0 {
+                ("Cumulative Yield (M reads)", 1_000_000.0)
+            } else if max_raw_value >= 1_000.0 {
+                ("Cumulative Yield (K reads)", 1_000.0)
+            } else {
+                ("Cumulative Yield (reads)", 1.0)
+            }
+        }
     };
 
     let total_data: Vec<(f64, f64)> = yield_points
@@ -482,7 +510,7 @@ fn render_yield_chart(frame: &mut Frame, app: &App, position_name: &str, area: R
             .style(Style::default().fg(Color::Green))
             .data(&passed_data),
         Dataset::default()
-            .name(format!("Total ({})", unit_label))
+            .name("Total")
             .marker(symbols::Marker::Braille)
             .graph_type(GraphType::Line)
             .style(Style::default().fg(Color::Cyan))
