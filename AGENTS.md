@@ -21,9 +21,8 @@ AI Agent Instructions — Termion
 
 Read these documents in order before making changes:
 
-1. **[DECISIONS.md](DECISIONS.md)** — All design decisions. Do NOT contradict these.
-2. **[WORK_PLAN.md](WORK_PLAN.md)** — Current phase and deliverables
-3. **[ARCHITECTURE_OVERVIEW.md](ARCHITECTURE_OVERVIEW.md)** — System structure
+1. **[ARCHITECTURE_OVERVIEW.md](ARCHITECTURE_OVERVIEW.md)** — System structure
+2. **[specs/](specs/)** — Detailed component specifications
 
 ### Spec Documents
 
@@ -93,8 +92,7 @@ When implementing unfamiliar APIs, debugging issues, or looking for patterns, us
 - Keep TUI rendering smooth (drop stale frames, don't block)
 
 ### DO NOT:
-- Change decisions in DECISIONS.md without explicit approval
-- Add Windows support (out of scope for MVP)
+- Add Windows support (out of scope)
 - Add remote/TLS support (localhost only for MVP)
 - Use vim-style keybindings as primary (arrows are primary)
 - Log to stderr during TUI mode (corrupts display)
@@ -765,6 +763,5 @@ Check [WORK_PLAN.md](WORK_PLAN.md) for the current development phase and its spe
 ## Questions?
 
 If something is unclear or contradicts the specs:
-1. Check DECISIONS.md first
-2. Check the relevant SPEC_*.md
-3. If still unclear, ask before implementing
+1. Check the relevant SPEC_*.md in specs/
+2. If still unclear, ask before implementing

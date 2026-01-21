@@ -12,7 +12,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
-[![CI](https://github.com/your-org/termion/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/termion/actions)
+[![CI](https://github.com/dleopold/Termion/actions/workflows/ci.yml/badge.svg)](https://github.com/dleopold/Termion/actions/workflows/ci.yml)
 
 A showcase-quality TUI for monitoring Oxford Nanopore MinKNOW sequencing runs. Built with Rust for performance and reliability.
 
@@ -47,58 +47,22 @@ A showcase-quality TUI for monitoring Oxford Nanopore MinKNOW sequencing runs. B
 
 ## Screenshots
 
-```
-┌─ Termion ─────────────────────────────────────────────────────────────────┐
-│                                                                            │
-│  MS00001 (MinION) ● Running                                               │
-│  Run: experiment_2026_01_21  Protocol: sequencing/sequencing_MIN114_DNA   │
-│  Started: 09:15:32           Elapsed: 02:34:12                            │
-│                                                                            │
-│  ┌─ Yield ───────────────────────────────────────────────────────────────┐│
-│  │      2.1 Gb ┤                                      ╭──────────────    ││
-│  │             │                              ╭──────╯                   ││
-│  │      1.0 Gb ┤                      ╭──────╯                           ││
-│  │             │              ╭──────╯                                   ││
-│  │      0      └──────────────┴──────────────────────────────────────    ││
-│  │              -30m                    -15m                    now      ││
-│  └───────────────────────────────────────────────────────────────────────┘│
-│                                                                            │
-│  ┌─ Read Length Distribution ────────────────────────────────────────────┐│
-│  │  Range: 0 - 50000 bp                                                  ││
-│  │  █████████████████████████                                            ││
-│  │  ████████████████████████████████████                                 ││
-│  │  ████████████████████████████████████████████████████                 ││
-│  │  0        10k       20k       30k       40k       50k                 ││
-│  └───────────────────────────────────────────────────────────────────────┘│
-│                                                                            │
-│  Stats                                                                     │
-│  ├─ Reads:     1,234,567          ├─ Throughput:  2.3 Gb/h               │
-│  ├─ Passed:    4.2 Gb             ├─ Mean Q:      Q18.4                  │
-│  └─ Failed:    156 Mb             └─ N50:         12,345 bp              │
-│                                                                            │
-│  [1]Stats [2]Charts [3]Pores  [p]Pause [s]Stop  [?]Help  [q]Quit         │
-└───────────────────────────────────────────────────────────────────────────┘
-```
+<!-- TODO: Add screenshots here -->
+<!-- Recommended: Overview screen, Detail view with charts, Pore activity panel -->
 
 ---
 
 ## Installation
 
-### From Source (Recommended)
+### From Source
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/termion.git
-cd termion
+git clone https://github.com/dleopold/Termion.git
+cd Termion
 
 # Build and install
 cargo install --path .
-```
-
-### From crates.io
-
-```bash
-cargo install termion
 ```
 
 ### Requirements
@@ -323,7 +287,6 @@ termion/
 | Document | Description |
 |----------|-------------|
 | [ARCHITECTURE_OVERVIEW.md](ARCHITECTURE_OVERVIEW.md) | System architecture and design |
-| [DECISIONS.md](DECISIONS.md) | Design decisions and rationale |
 | [specs/](specs/) | Detailed component specifications |
 | [learning/](learning/) | Educational material from each development phase |
 | [dev/README.md](dev/README.md) | Development environment setup |
@@ -335,31 +298,10 @@ termion/
 Termion was built with these principles:
 
 1. **TUI-first** — The terminal interface is the primary product, not an afterthought
-2. **Showcase quality** — Polished visual design inspired by [bottom](https://github.com/ClementTsang/bottom), [trippy](https://github.com/fujiapple852/trippy), and [scope-tui](https://github.com/alemidev/scope-tui)
+2. **Showcase quality** — Polished visual design for real-time data visualization
 3. **Real-time** — Streaming data visualization, not polling where possible
 4. **Observable** — Structured logging for debugging without corrupting the display
 5. **Conventional** — Arrow keys and Enter, not vim-only keybindings
-
----
-
-## Contributing
-
-Contributions are welcome! Please:
-
-1. Read [DECISIONS.md](DECISIONS.md) before proposing changes to core design
-2. Follow existing code patterns and naming conventions
-3. Run `cargo fmt` and `cargo clippy` before submitting
-4. Add tests for new functionality
-5. Update documentation as needed
-
-### Code Quality
-
-```bash
-# Before every commit
-cargo fmt
-cargo clippy -- -D warnings
-cargo test
-```
 
 ---
 
@@ -374,4 +316,3 @@ MIT License — see [LICENSE](LICENSE) for details.
 - **Oxford Nanopore Technologies** — MinKNOW API
 - **ratatui** — Terminal UI framework
 - **tonic** — gRPC implementation
-- Design inspiration from [bottom](https://github.com/ClementTsang/bottom), [trippy](https://github.com/fujiapple852/trippy), and [scope-tui](https://github.com/alemidev/scope-tui)
