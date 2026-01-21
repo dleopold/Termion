@@ -467,13 +467,14 @@ fn render_yield_chart(frame: &mut Frame, app: &App, position_name: &str, area: R
     let min_y = (data_min_y - y_padding).max(0.0);
     let max_y = data_max_y + y_padding;
 
+    // Order matters: later datasets render on top. We want total > passed > failed.
     let datasets = vec![
         Dataset::default()
-            .name(format!("Total ({})", unit_label))
+            .name("Failed")
             .marker(symbols::Marker::Braille)
             .graph_type(GraphType::Line)
-            .style(Style::default().fg(Color::Cyan))
-            .data(&total_data),
+            .style(Style::default().fg(Color::Red))
+            .data(&failed_data),
         Dataset::default()
             .name("Passed")
             .marker(symbols::Marker::Braille)
@@ -481,11 +482,11 @@ fn render_yield_chart(frame: &mut Frame, app: &App, position_name: &str, area: R
             .style(Style::default().fg(Color::Green))
             .data(&passed_data),
         Dataset::default()
-            .name("Failed")
+            .name(format!("Total ({})", unit_label))
             .marker(symbols::Marker::Braille)
             .graph_type(GraphType::Line)
-            .style(Style::default().fg(Color::Red))
-            .data(&failed_data),
+            .style(Style::default().fg(Color::Cyan))
+            .data(&total_data),
     ];
 
     let time_label = format_time_label(max_x - min_x);
@@ -512,7 +513,8 @@ fn render_yield_chart(frame: &mut Frame, app: &App, position_name: &str, area: R
                     Line::from(format!("{:.1}", (min_y + max_y) / 2.0)),
                     Line::from(format!("{:.1}", max_y)),
                 ]),
-        );
+        )
+        .legend_position(None);
 
     frame.render_widget(chart, area);
 }
