@@ -39,7 +39,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     let config = Config::load(&cli)?;
 
     // Initialize logging (to file, not stderr — TUI owns the screen)
-    termion::logging::init(&config.logging)?;
+    let _log_guard = termion::logging::init(&config.logging)?;
 
     match cli.command {
         Some(Commands::List { json }) => termion::cli::list::run(&config, json).await,

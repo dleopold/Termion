@@ -6,7 +6,7 @@ use crate::client::{
     RunState, StatsSnapshot, YieldDataPoint,
 };
 use crate::config::Config;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,23 +114,23 @@ pub struct App {
 }
 
 pub struct ChartBuffer {
-    pub data: Vec<(f64, f64)>,
+    pub data: VecDeque<(f64, f64)>,
     pub max_points: usize,
 }
 
 impl ChartBuffer {
     pub fn new(max_points: usize) -> Self {
         Self {
-            data: Vec::with_capacity(max_points),
+            data: VecDeque::with_capacity(max_points),
             max_points,
         }
     }
 
     pub fn push(&mut self, timestamp: f64, value: f64) {
         if self.data.len() >= self.max_points {
-            self.data.remove(0);
+            self.data.pop_front();
         }
-        self.data.push((timestamp, value));
+        self.data.push_back((timestamp, value));
     }
 
     pub fn clear(&mut self) {

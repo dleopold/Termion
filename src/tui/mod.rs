@@ -60,7 +60,13 @@ async fn run_app(
     let mut reconnect_attempt = 0u32;
     let mut last_reconnect = std::time::Instant::now();
 
-    let client_result = Client::connect(&config.connection.host, config.connection.port).await;
+    let client_result = Client::connect_with_timeouts(
+        &config.connection.host,
+        config.connection.port,
+        config.connection.connect_timeout,
+        config.connection.request_timeout,
+    )
+    .await;
 
     let mut client = match client_result {
         Ok(c) => {
@@ -193,7 +199,14 @@ async fn try_reconnect(
     *last_attempt = std::time::Instant::now();
     app.set_reconnecting(*attempt);
 
-    match Client::connect(&config.connection.host, config.connection.port).await {
+    match Client::connect_with_timeouts(
+        &config.connection.host,
+        config.connection.port,
+        config.connection.connect_timeout,
+        config.connection.request_timeout,
+    )
+    .await
+    {
         Ok(c) => {
             *client = Some(c);
             *attempt = 0;
@@ -234,7 +247,14 @@ async fn handle_action(
                     Err(e) => app.set_error(e.display_message()),
                 }
             } else {
-                match Client::connect(&config.connection.host, config.connection.port).await {
+                match Client::connect_with_timeouts(
+                    &config.connection.host,
+                    config.connection.port,
+                    config.connection.connect_timeout,
+                    config.connection.request_timeout,
+                )
+                .await
+                {
                     Ok(c) => {
                         *client = Some(c);
                         app.set_connected();
@@ -406,70 +426,9 @@ async fn fetch_detail_data(app: &mut App, pos_client: &mut crate::client::Positi
         }
     }
 
-    if run_is_active {
-        match pos_client.stream_duty_time(&run_id).await {
-            Ok(mut stream) => {
-                if let Some(Ok(duty_time)) = stream.next().await {
-                    let counts = duty_time.pore_counts();
-                    tracing::debug!(
-                        position = %position_name,
-                        total_pores = duty_time.pore_occupancy.len(),
-                        sequencing = counts.sequencing,
-                        pore_available = counts.pore_available,
-                        inactive = counts.inactive,
-                        unavailable = counts.unavailable,
-                        avg_occupancy = %format!("{:.2}", duty_time.average_occupancy()),
-                        "Got duty time"
-                    );
-
-                    if !duty_time.pore_occupancy.is_empty() {
-                        let sample: Vec<f32> =
-                            duty_time.pore_occupancy.iter().take(10).copied().collect();
-                        tracing::debug!(sample = ?sample, "First 10 occupancy values");
-                    }
-
-                    if let Some(stats) = app.stats_cache.get_mut(&position_name) {
-                        stats.active_pores = duty_time.active_pores(0.1) as u32;
-                    }
-
-                    app.update_duty_time(&position_name, duty_time);
-                }
-            }
-            Err(e) => {
-                tracing::debug!(position = %position_name, error = %e.display_message(), "Duty time stream failed");
-            }
-        }
-        match pos_client.get_mean_quality(&run_id).await {
-            Ok(Some(quality)) => {
-                tracing::debug!(position = %position_name, quality = quality, "Got mean quality");
-                if let Some(stats) = app.stats_cache.get_mut(&position_name) {
-                    stats.mean_quality = quality as f64;
-                }
-            }
-            Ok(None) => {
-                tracing::debug!(position = %position_name, "No quality data available");
-            }
-            Err(e) => {
-                tracing::debug!(position = %position_name, error = %e.display_message(), "Quality boxplot failed");
-            }
-        }
-
-        match pos_client.get_channel_states(512).await {
-            Ok(channel_states) => {
-                if let Some(stats) = app.stats_cache.get_mut(&position_name) {
-                    stats.active_pores = channel_states.sequencing_count() as u32;
-                }
-                app.update_channel_states(&position_name, channel_states);
-            }
-            Err(e) => {
-                tracing::debug!(position = %position_name, error = %e.display_message(), "Channel states failed");
-            }
-        }
+    let channel_count = if let Some(layout) = app.channel_layouts.get(&position_name) {
+        layout.channel_count as u32
     } else {
-        tracing::debug!(position = %position_name, "Skipping streaming endpoints for inactive run");
-    }
-
-    if !app.channel_layouts.contains_key(&position_name) {
         match pos_client.get_channel_layout().await {
             Ok(layout) => {
                 tracing::info!(
@@ -479,12 +438,100 @@ async fn fetch_detail_data(app: &mut App, pos_client: &mut crate::client::Positi
                     channels = layout.channel_count,
                     "Got channel layout"
                 );
+                let count = layout.channel_count as u32;
                 app.update_channel_layout(&position_name, layout);
+                count
             }
             Err(e) => {
                 tracing::debug!(position = %position_name, error = %e.display_message(), "Channel layout failed");
+                512 // Default fallback for MinION
             }
         }
+    };
+
+    if run_is_active {
+        match tokio::time::timeout(Duration::from_secs(5), async {
+            let mut stream = pos_client.stream_duty_time(&run_id).await?;
+            stream.next().await.transpose()
+        })
+        .await
+        {
+            Ok(Ok(Some(duty_time))) => {
+                let counts = duty_time.pore_counts();
+                tracing::debug!(
+                    position = %position_name,
+                    total_pores = duty_time.pore_occupancy.len(),
+                    sequencing = counts.sequencing,
+                    pore_available = counts.pore_available,
+                    inactive = counts.inactive,
+                    unavailable = counts.unavailable,
+                    avg_occupancy = %format!("{:.2}", duty_time.average_occupancy()),
+                    "Got duty time"
+                );
+
+                if !duty_time.pore_occupancy.is_empty() {
+                    let sample: Vec<f32> =
+                        duty_time.pore_occupancy.iter().take(10).copied().collect();
+                    tracing::debug!(sample = ?sample, "First 10 occupancy values");
+                }
+
+                if let Some(stats) = app.stats_cache.get_mut(&position_name) {
+                    stats.active_pores = duty_time.active_pores(0.1) as u32;
+                }
+
+                app.update_duty_time(&position_name, duty_time);
+            }
+            Ok(Ok(None)) => {
+                tracing::debug!(position = %position_name, "No duty time data available");
+            }
+            Ok(Err(e)) => {
+                tracing::debug!(position = %position_name, error = %e.display_message(), "Duty time stream failed");
+            }
+            Err(_) => {
+                tracing::debug!(position = %position_name, "Duty time fetch timed out");
+            }
+        }
+        match tokio::time::timeout(Duration::from_secs(5), pos_client.get_mean_quality(&run_id))
+            .await
+        {
+            Ok(Ok(Some(quality))) => {
+                tracing::debug!(position = %position_name, quality = quality, "Got mean quality");
+                if let Some(stats) = app.stats_cache.get_mut(&position_name) {
+                    stats.mean_quality = quality as f64;
+                }
+            }
+            Ok(Ok(None)) => {
+                tracing::debug!(position = %position_name, "No quality data available");
+            }
+            Ok(Err(e)) => {
+                tracing::debug!(position = %position_name, error = %e.display_message(), "Quality boxplot failed");
+            }
+            Err(_) => {
+                tracing::debug!(position = %position_name, "Quality fetch timed out");
+            }
+        }
+
+        match tokio::time::timeout(
+            Duration::from_secs(5),
+            pos_client.get_channel_states(channel_count),
+        )
+        .await
+        {
+            Ok(Ok(channel_states)) => {
+                if let Some(stats) = app.stats_cache.get_mut(&position_name) {
+                    stats.active_pores = channel_states.sequencing_count() as u32;
+                }
+                app.update_channel_states(&position_name, channel_states);
+            }
+            Ok(Err(e)) => {
+                tracing::debug!(position = %position_name, error = %e.display_message(), "Channel states failed");
+            }
+            Err(_) => {
+                tracing::debug!(position = %position_name, "Channel states fetch timed out");
+            }
+        }
+    } else {
+        tracing::debug!(position = %position_name, "Skipping streaming endpoints for inactive run");
     }
 }
 

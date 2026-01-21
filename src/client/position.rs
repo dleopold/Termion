@@ -28,8 +28,6 @@ use std::time::Duration;
 use tonic::service::Interceptor;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 
-const MINKNOW_CA_CERT_PATH: &str = "/var/lib/minknow/data/rpc-certs/minknow/ca.crt";
-
 #[derive(Clone)]
 struct AuthInterceptor {
     token: Option<Arc<str>>,
@@ -67,6 +65,23 @@ impl PositionClient {
         host: &str,
         auth_token: Option<Arc<str>>,
     ) -> Result<Self, ClientError> {
+        Self::connect_with_timeouts(
+            position,
+            host,
+            auth_token,
+            super::DEFAULT_CONNECT_TIMEOUT,
+            super::DEFAULT_REQUEST_TIMEOUT,
+        )
+        .await
+    }
+
+    pub async fn connect_with_timeouts(
+        position: Position,
+        host: &str,
+        auth_token: Option<Arc<str>>,
+        connect_timeout: Duration,
+        request_timeout: Duration,
+    ) -> Result<Self, ClientError> {
         if position.grpc_port == 0 {
             return Err(ClientError::Connection {
                 endpoint: format!("{}:{}", host, position.grpc_port),
@@ -81,15 +96,12 @@ impl PositionClient {
             "Connecting to position services"
         );
 
-        let ca_cert =
-            std::fs::read_to_string(MINKNOW_CA_CERT_PATH).map_err(|e| ClientError::Connection {
-                endpoint: endpoint.clone(),
-                source: Box::new(e),
-            })?;
+        let tls_domain = super::tls_domain_for_host(&endpoint, host)?;
+        let ca_cert = super::load_ca_cert(&endpoint).await?;
 
         let tls_config = ClientTlsConfig::new()
             .ca_certificate(Certificate::from_pem(&ca_cert))
-            .domain_name("localhost");
+            .domain_name(tls_domain);
 
         let channel = Channel::from_shared(endpoint.clone())
             .map_err(|e| ClientError::Connection {
@@ -101,8 +113,8 @@ impl PositionClient {
                 endpoint: endpoint.clone(),
                 source: Box::new(e),
             })?
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(30))
+            .connect_timeout(connect_timeout)
+            .timeout(request_timeout)
             .connect()
             .await
             .map_err(|e| ClientError::Connection {

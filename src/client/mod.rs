@@ -33,12 +33,50 @@ use crate::proto::minknow_api::manager::{
     LocalAuthenticationTokenPathRequest,
 };
 use rand::Rng;
+use std::io;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 
-const MINKNOW_CA_CERT_PATH: &str = "/var/lib/minknow/data/rpc-certs/minknow/ca.crt";
+pub(crate) const MINKNOW_CA_CERT_PATH: &str = "/var/lib/minknow/data/rpc-certs/minknow/ca.crt";
+pub(crate) const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+pub(crate) fn is_localhost(host: &str) -> bool {
+    matches!(host, "localhost" | "127.0.0.1" | "::1")
+}
+
+#[allow(clippy::result_large_err)]
+pub(crate) fn tls_domain_for_host(endpoint: &str, host: &str) -> Result<&'static str, ClientError> {
+    if is_localhost(host) {
+        Ok("localhost")
+    } else {
+        Err(ClientError::Connection {
+            endpoint: endpoint.to_string(),
+            source: "Remote hosts are not supported; use localhost".into(),
+        })
+    }
+}
+
+pub(crate) async fn load_ca_cert(endpoint: &str) -> Result<String, ClientError> {
+    let ca_cert_path = Path::new(MINKNOW_CA_CERT_PATH);
+    match tokio::fs::read_to_string(ca_cert_path).await {
+        Ok(content) => Ok(content),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Err(ClientError::Connection {
+            endpoint: endpoint.to_string(),
+            source: format!(
+                "MinKNOW CA certificate not found at {}. Is MinKNOW installed?",
+                MINKNOW_CA_CERT_PATH
+            )
+            .into(),
+        }),
+        Err(e) => Err(ClientError::Connection {
+            endpoint: endpoint.to_string(),
+            source: Box::new(e),
+        }),
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ReconnectPolicy {
@@ -83,34 +121,31 @@ pub struct Client {
     host: String,
     manager: ManagerServiceClient<Channel>,
     auth_token: Option<Arc<str>>,
+    connect_timeout: Duration,
+    request_timeout: Duration,
 }
 
 impl Client {
     pub async fn connect(host: &str, port: u16) -> Result<Self, ClientError> {
+        Self::connect_with_timeouts(host, port, DEFAULT_CONNECT_TIMEOUT, DEFAULT_REQUEST_TIMEOUT)
+            .await
+    }
+
+    pub async fn connect_with_timeouts(
+        host: &str,
+        port: u16,
+        connect_timeout: Duration,
+        request_timeout: Duration,
+    ) -> Result<Self, ClientError> {
         let endpoint = format!("https://{}:{}", host, port);
         tracing::info!(endpoint = %endpoint, "Connecting to MinKNOW manager");
 
-        let ca_cert_path = Path::new(MINKNOW_CA_CERT_PATH);
-        if !ca_cert_path.exists() {
-            return Err(ClientError::Connection {
-                endpoint: endpoint.clone(),
-                source: format!(
-                    "MinKNOW CA certificate not found at {}. Is MinKNOW installed?",
-                    MINKNOW_CA_CERT_PATH
-                )
-                .into(),
-            });
-        }
-
-        let ca_cert =
-            std::fs::read_to_string(ca_cert_path).map_err(|e| ClientError::Connection {
-                endpoint: endpoint.clone(),
-                source: Box::new(e),
-            })?;
+        let tls_domain = tls_domain_for_host(&endpoint, host)?;
+        let ca_cert = load_ca_cert(&endpoint).await?;
 
         let tls_config = ClientTlsConfig::new()
             .ca_certificate(Certificate::from_pem(&ca_cert))
-            .domain_name("localhost");
+            .domain_name(tls_domain);
 
         let channel = Channel::from_shared(endpoint.clone())
             .map_err(|e| ClientError::Connection {
@@ -122,8 +157,8 @@ impl Client {
                 endpoint: endpoint.clone(),
                 source: Box::new(e),
             })?
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(30))
+            .connect_timeout(connect_timeout)
+            .timeout(request_timeout)
             .connect()
             .await
             .map_err(|e| ClientError::Connection {
@@ -141,6 +176,8 @@ impl Client {
             host: host.to_string(),
             manager,
             auth_token,
+            connect_timeout,
+            request_timeout,
         })
     }
 
@@ -162,14 +199,18 @@ impl Client {
         }
 
         let token_path = Path::new(&response.path);
-        if !token_path.exists() {
-            tracing::debug!(path = %response.path, "Auth token file does not exist");
-            return Ok(None);
-        }
-
-        let content = std::fs::read_to_string(token_path).map_err(|e| ClientError::Auth {
-            message: format!("Failed to read token file {}: {}", response.path, e),
-        })?;
+        let content = match tokio::fs::read_to_string(token_path).await {
+            Ok(content) => content,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                tracing::debug!(path = %response.path, "Auth token file does not exist");
+                return Ok(None);
+            }
+            Err(e) => {
+                return Err(ClientError::Auth {
+                    message: format!("Failed to read token file {}: {}", response.path, e),
+                });
+            }
+        };
 
         let token_data: serde_json::Value =
             serde_json::from_str(&content).map_err(|e| ClientError::Auth {
@@ -199,7 +240,14 @@ impl Client {
         &self,
         position: Position,
     ) -> Result<PositionClient, ClientError> {
-        PositionClient::connect(position, &self.host, self.auth_token.clone()).await
+        PositionClient::connect_with_timeouts(
+            position,
+            &self.host,
+            self.auth_token.clone(),
+            self.connect_timeout,
+            self.request_timeout,
+        )
+        .await
     }
 
     pub async fn list_positions(&mut self) -> Result<Vec<Position>, ClientError> {

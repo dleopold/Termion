@@ -11,14 +11,16 @@ pub enum Event {
     Resize(u16, u16),
 }
 
+const EVENT_CHANNEL_CAPACITY: usize = 256;
+
 pub struct EventHandler {
-    rx: mpsc::UnboundedReceiver<Event>,
-    _tx: mpsc::UnboundedSender<Event>,
+    rx: mpsc::Receiver<Event>,
+    _tx: mpsc::Sender<Event>,
 }
 
 impl EventHandler {
     pub fn new(tick_rate: Duration) -> Self {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
         let _tx = tx.clone();
 
         let event_tx = tx.clone();
@@ -26,18 +28,18 @@ impl EventHandler {
             if event::poll(tick_rate).unwrap_or(false) {
                 match event::read() {
                     Ok(CrosstermEvent::Key(key)) => {
-                        if event_tx.send(Event::Key(key)).is_err() {
+                        if event_tx.blocking_send(Event::Key(key)).is_err() {
                             break;
                         }
                     }
                     Ok(CrosstermEvent::Resize(w, h)) => {
-                        if event_tx.send(Event::Resize(w, h)).is_err() {
+                        if event_tx.blocking_send(Event::Resize(w, h)).is_err() {
                             break;
                         }
                     }
                     _ => {}
                 }
-            } else if event_tx.send(Event::Tick).is_err() {
+            } else if event_tx.blocking_send(Event::Tick).is_err() {
                 break;
             }
         });

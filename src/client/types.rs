@@ -5,9 +5,10 @@
 
 use crate::proto::minknow_api::manager::{flow_cell_position, FlowCellPosition};
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 
 /// A connected sequencing device.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Device {
     /// Unique device identifier (e.g., "MS00001").
     pub id: String,
@@ -20,7 +21,7 @@ pub struct Device {
 }
 
 /// Device connection state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 pub enum DeviceState {
     /// Device is connected and ready.
     #[default]

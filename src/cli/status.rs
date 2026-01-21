@@ -8,7 +8,13 @@ pub async fn run(
     json: bool,
     position_filter: Option<String>,
 ) -> anyhow::Result<()> {
-    let mut client = Client::connect(&config.connection.host, config.connection.port).await?;
+    let mut client = Client::connect_with_timeouts(
+        &config.connection.host,
+        config.connection.port,
+        config.connection.connect_timeout,
+        config.connection.request_timeout,
+    )
+    .await?;
     let positions = client.list_positions().await?;
 
     if positions.is_empty() {

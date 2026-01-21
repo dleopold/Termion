@@ -754,12 +754,6 @@ let client = Client::connect(&server.url()).await?;
 
 ---
 
-## Current Phase
-
-Check [WORK_PLAN.md](WORK_PLAN.md) for the current development phase and its specific deliverables.
-
----
-
 ## Questions?
 
 If something is unclear or contradicts the specs:

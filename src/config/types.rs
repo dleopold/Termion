@@ -223,6 +223,9 @@ pub enum ConfigError {
 
     #[error("Invalid multiplier: must be greater than 1.0")]
     InvalidMultiplier,
+
+    #[error("Invalid log level '{}': expected one of off, error, warn, info, debug, trace", .0)]
+    InvalidLogLevel(String),
 }
 
 #[cfg(test)]

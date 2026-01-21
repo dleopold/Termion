@@ -22,11 +22,11 @@ impl Config {
 
         // Load config file if it exists
         if let Some(file_config) = Self::load_file(cli)? {
-            config.merge(file_config);
+            config.merge(file_config)?;
         }
 
         // Apply environment variables
-        config.apply_env();
+        config.apply_env()?;
 
         // Apply CLI flags (highest precedence)
         config.apply_cli(cli);
@@ -59,7 +59,7 @@ impl Config {
         }
     }
 
-    fn merge(&mut self, file: FileConfig) {
+    fn merge(&mut self, file: FileConfig) -> Result<(), ConfigError> {
         if let Some(conn) = file.connection {
             if let Some(host) = conn.host {
                 self.connection.host = host;
@@ -101,15 +101,19 @@ impl Config {
 
         if let Some(logging) = file.logging {
             if let Some(level) = logging.level {
-                self.logging.level = level.parse().unwrap_or_default();
+                self.logging.level = level
+                    .parse()
+                    .map_err(|_| ConfigError::InvalidLogLevel(level))?;
             }
             if let Some(file) = logging.file {
                 self.logging.file = expand_tilde(&file);
             }
         }
+
+        Ok(())
     }
 
-    fn apply_env(&mut self) {
+    fn apply_env(&mut self) -> Result<(), ConfigError> {
         if let Ok(host) = std::env::var("TERMION_HOST") {
             self.connection.host = host;
         }
@@ -119,11 +123,14 @@ impl Config {
             }
         }
         if let Ok(level) = std::env::var("TERMION_LOG_LEVEL") {
-            self.logging.level = level.parse().unwrap_or_default();
+            self.logging.level = level
+                .parse()
+                .map_err(|_| ConfigError::InvalidLogLevel(level))?;
         }
         if let Ok(file) = std::env::var("TERMION_LOG_FILE") {
             self.logging.file = PathBuf::from(file);
         }
+        Ok(())
     }
 
     fn apply_cli(&mut self, cli: &Cli) {
@@ -292,7 +299,7 @@ mod tests {
             reconnect: None,
             logging: None,
         };
-        config.merge(file);
+        config.merge(file).unwrap();
         assert_eq!(config.connection.host, "remote-host");
         assert_eq!(config.connection.port, 9999);
         assert_eq!(config.connection.connect_timeout, Duration::from_secs(10));
@@ -312,7 +319,7 @@ mod tests {
             reconnect: None,
             logging: None,
         };
-        config.merge(file);
+        config.merge(file).unwrap();
         assert_eq!(config.tui.refresh_interval, Duration::from_millis(500));
         assert_eq!(config.tui.chart_history, Duration::from_secs(3600));
     }
@@ -330,10 +337,26 @@ mod tests {
             }),
             logging: None,
         };
-        config.merge(file);
+        config.merge(file).unwrap();
         assert_eq!(config.reconnect.initial_delay, Duration::from_millis(2000));
         assert_eq!(config.reconnect.max_delay, Duration::from_millis(60000));
         assert_eq!(config.reconnect.multiplier, 3.0);
+    }
+
+    #[test]
+    fn test_invalid_log_level_in_config() {
+        let mut config = Config::default();
+        let file = FileConfig {
+            connection: None,
+            tui: None,
+            reconnect: None,
+            logging: Some(FileLoggingConfig {
+                level: Some("invalid_level".into()),
+                file: None,
+            }),
+        };
+        let result = config.merge(file);
+        assert!(matches!(result, Err(ConfigError::InvalidLogLevel(ref s)) if s == "invalid_level"));
     }
 
     #[test]
