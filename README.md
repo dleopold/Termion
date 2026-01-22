@@ -14,7 +14,7 @@
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 [![CI](https://github.com/dleopold/Termion/actions/workflows/ci.yml/badge.svg)](https://github.com/dleopold/Termion/actions/workflows/ci.yml)
 
-A showcase-quality TUI for monitoring Oxford Nanopore MinKNOW sequencing runs. Built with Rust for performance and reliability.
+A command line tool for monitoring Oxford Nanopore MinKNOW sequencing runs. Built with Rust for performance and reliability.
 
 ---
 
@@ -22,14 +22,12 @@ A showcase-quality TUI for monitoring Oxford Nanopore MinKNOW sequencing runs. B
 
 **Real-time Dashboard**
 - Live throughput charts with time-series visualization
-- Yield tracking with automatic unit scaling (bp, Kb, Mb, Gb)
 - Read length distribution histograms with range selection
 - Channel activity heatmap showing pore states
 
 **Run Monitoring**
 - Device and position discovery
 - Run state indicators (running, paused, idle, finishing)
-- Duty time tracking per channel state
 - Mux scan detection and status
 
 **Run Control**
@@ -41,7 +39,6 @@ A showcase-quality TUI for monitoring Oxford Nanopore MinKNOW sequencing runs. B
 - `termion list` — List devices and positions
 - `termion status` — Get run metrics
 - JSON output for automation
-- Proper exit codes for scripting
 
 ---
 
@@ -69,17 +66,23 @@ Download the latest release for your platform from [GitHub Releases](https://git
 curl -LO https://github.com/dleopold/Termion/releases/latest/download/termion-x86_64-unknown-linux-musl.tar.gz
 tar xzf termion-x86_64-unknown-linux-musl.tar.gz
 sudo mv termion /usr/local/bin/
+```
 
+```bash
 # Linux (aarch64/ARM64) - static binary, works on any distro
 curl -LO https://github.com/dleopold/Termion/releases/latest/download/termion-aarch64-unknown-linux-musl.tar.gz
 tar xzf termion-aarch64-unknown-linux-musl.tar.gz
 sudo mv termion /usr/local/bin/
+```
 
+```bash
 # macOS (Apple Silicon)
 curl -LO https://github.com/dleopold/Termion/releases/latest/download/termion-aarch64-apple-darwin.tar.gz
 tar xzf termion-aarch64-apple-darwin.tar.gz
 sudo mv termion /usr/local/bin/
+```
 
+```bash
 # macOS (Intel)
 curl -LO https://github.com/dleopold/Termion/releases/latest/download/termion-x86_64-apple-darwin.tar.gz
 tar xzf termion-x86_64-apple-darwin.tar.gz
@@ -151,16 +154,6 @@ termion status --json
 termion status --position 1
 ```
 
-#### Exit Codes
-
-| Code | Meaning |
-|------|---------|
-| 0 | Success |
-| 1 | General error |
-| 2 | Connection failed |
-| 3 | Invalid arguments |
-| 4 | Resource not found |
-
 ---
 
 ## Configuration
@@ -211,20 +204,20 @@ Termion is built with a clean separation of concerns:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                         termion                              │
+│                         termion                             │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
 │  │     TUI     │  │     CLI     │  │      Config         │  │
 │  │  (ratatui)  │  │   (clap)    │  │  (TOML + env)       │  │
 │  └──────┬──────┘  └──────┬──────┘  └──────────┬──────────┘  │
-│         │                │                     │             │
-│         └────────────────┼─────────────────────┘             │
-│                          │                                   │
+│         │                │                     │            │
+│         └────────────────┼─────────────────────┘            │
+│                          │                                  │
 │                   ┌──────▼──────┐                           │
 │                   │   Client    │                           │
 │                   │   (tonic)   │                           │
 │                   └──────┬──────┘                           │
-│                          │                                   │
-└──────────────────────────┼───────────────────────────────────┘
+│                          │                                  │
+└──────────────────────────┼──────────────────────────────────┘
                            │ gRPC
                     ┌──────▼──────┐
                     │   MinKNOW   │
