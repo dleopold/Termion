@@ -455,7 +455,11 @@ impl ChannelStatesSnapshot {
             .iter()
             .filter(|(name, _)| {
                 let n = name.to_lowercase();
-                n.contains("single_pore") || n.contains("pore_available") || n == "pore"
+                // Must match state_to_symbol() logic: contains "pore" or "single"
+                // but exclude states that match higher-priority categories
+                let is_pore_like = n.contains("pore") || n.contains("single");
+                let is_sequencing = n.contains("strand") || n.contains("sequencing");
+                is_pore_like && !is_sequencing
             })
             .map(|(_, count)| count)
             .sum()
