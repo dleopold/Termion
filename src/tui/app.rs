@@ -294,6 +294,13 @@ impl App {
     }
 
     pub fn update_run_state(&mut self, position_name: &str, state: RunState) {
+        if !state.has_displayable_run() {
+            self.stats_cache.remove(position_name);
+            self.yield_history.remove(position_name);
+            self.histograms.remove(position_name);
+            self.duty_time.remove(position_name);
+            self.channel_states.remove(position_name);
+        }
         self.run_states.insert(position_name.to_string(), state);
     }
 

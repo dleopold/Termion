@@ -53,19 +53,22 @@ pub async fn run(
         let status = if position.grpc_port > 0 {
             match client.connect_position(position.clone()).await {
                 Ok(mut pos_client) => match pos_client.get_acquisition_info().await {
-                    Ok(info) => PositionStatus {
-                        name: position.name.clone(),
-                        state: info.state.label().to_string(),
-                        run_id: if info.run_id.is_empty() {
-                            None
-                        } else {
-                            Some(info.run_id)
-                        },
-                        reads: info.reads_processed,
-                        bases_passed: info.bases_passed,
-                        bases_failed: info.bases_failed,
-                        simulated: position.is_simulated,
-                    },
+                    Ok(info) => {
+                        let has_run = info.state.has_displayable_run();
+                        PositionStatus {
+                            name: position.name.clone(),
+                            state: info.state.label().to_string(),
+                            run_id: if info.run_id.is_empty() || !has_run {
+                                None
+                            } else {
+                                Some(info.run_id)
+                            },
+                            reads: if has_run { info.reads_processed } else { 0 },
+                            bases_passed: if has_run { info.bases_passed } else { 0 },
+                            bases_failed: if has_run { info.bases_failed } else { 0 },
+                            simulated: position.is_simulated,
+                        }
+                    }
                     Err(e) => PositionStatus {
                         name: position.name.clone(),
                         state: format!("Error: {}", e),

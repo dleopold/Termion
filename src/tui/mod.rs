@@ -317,16 +317,24 @@ async fn refresh_data(app: &mut App, client: &mut Client) {
 
             for (idx, pos) in positions.iter().enumerate() {
                 if let Ok(mut pos_client) = client.connect_position(pos.clone()).await {
-                    if let Ok(stats) = pos_client.get_stats().await {
-                        app.update_stats(&pos.name, stats);
+                    let run_state = pos_client.get_run_state().await.ok();
+                    if let Some(ref state) = run_state {
+                        app.update_run_state(&pos.name, state.clone());
                     }
 
-                    if let Ok(run_state) = pos_client.get_run_state().await {
-                        app.update_run_state(&pos.name, run_state);
-                    }
+                    let has_run = run_state
+                        .as_ref()
+                        .map(|s| s.has_displayable_run())
+                        .unwrap_or(false);
 
-                    if in_detail_view && detail_position_idx == Some(idx) {
-                        fetch_detail_data(app, &mut pos_client).await;
+                    if has_run {
+                        if let Ok(stats) = pos_client.get_stats().await {
+                            app.update_stats(&pos.name, stats);
+                        }
+
+                        if in_detail_view && detail_position_idx == Some(idx) {
+                            fetch_detail_data(app, &mut pos_client).await;
+                        }
                     }
                 }
             }

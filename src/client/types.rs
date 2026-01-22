@@ -153,6 +153,12 @@ impl RunState {
         )
     }
 
+    /// Returns true if stats should be displayed for this run state.
+    /// Only shows stats for positions with active or recently-stopped runs.
+    pub fn has_displayable_run(&self) -> bool {
+        !matches!(self, RunState::Idle)
+    }
+
     /// Returns a short label for display.
     pub fn label(&self) -> &'static str {
         match self {
