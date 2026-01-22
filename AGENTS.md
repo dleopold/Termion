@@ -752,6 +752,13 @@ let client = Client::connect(&server.url()).await?;
 5. Use `ClientError` for all errors
 6. Add unit tests + integration tests
 
+### Publishing a Release
+
+1. Create or update the version tag (format `vX.Y.Z`)
+2. Push the tag to GitHub (`git push origin vX.Y.Z`)
+3. The release build workflow triggers on tag push (not on creating a GitHub Release)
+4. If you need to re-run the workflow, delete and re-push the tag
+
 ---
 
 ## Questions?
