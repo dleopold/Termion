@@ -39,7 +39,22 @@ use std::sync::Arc;
 use std::time::Duration;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 
-pub(crate) const MINKNOW_CA_CERT_PATH: &str = "/var/lib/minknow/data/rpc-certs/minknow/ca.crt";
+/// Default CA certificate search paths for Linux, in order of priority.
+/// Matches the paths used by the official Python minknow_api library.
+#[cfg(target_os = "linux")]
+pub(crate) const MINKNOW_CA_CERT_PATHS: &[&str] = &[
+    "/data/rpc-certs/minknow/ca.crt",
+    "/var/lib/minknow/data/rpc-certs/minknow/ca.crt",
+];
+
+/// Default CA certificate search path for macOS.
+#[cfg(target_os = "macos")]
+pub(crate) const MINKNOW_CA_CERT_PATHS: &[&str] =
+    &["/Library/MinKNOW/data/rpc-certs/minknow/ca.crt"];
+
+/// Environment variable for custom CA certificate path (matches Python library).
+pub(crate) const MINKNOW_TRUSTED_CA_ENV: &str = "MINKNOW_TRUSTED_CA";
+
 pub(crate) const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -59,23 +74,73 @@ pub(crate) fn tls_domain_for_host(endpoint: &str, host: &str) -> Result<&'static
     }
 }
 
+/// Load the MinKNOW CA certificate for TLS connections.
+///
+/// Search order (matches official Python minknow_api library):
+/// 1. `MINKNOW_TRUSTED_CA` environment variable (custom path)
+/// 2. Platform-specific default paths:
+///    - Linux: `/data/rpc-certs/minknow/ca.crt`, `/var/lib/minknow/data/rpc-certs/minknow/ca.crt`
+///    - macOS: `/Library/MinKNOW/data/rpc-certs/minknow/ca.crt`
 pub(crate) async fn load_ca_cert(endpoint: &str) -> Result<String, ClientError> {
-    let ca_cert_path = Path::new(MINKNOW_CA_CERT_PATH);
-    match tokio::fs::read_to_string(ca_cert_path).await {
-        Ok(content) => Ok(content),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Err(ClientError::Connection {
-            endpoint: endpoint.to_string(),
-            source: format!(
-                "MinKNOW CA certificate not found at {}. Is MinKNOW installed?",
-                MINKNOW_CA_CERT_PATH
-            )
-            .into(),
-        }),
-        Err(e) => Err(ClientError::Connection {
-            endpoint: endpoint.to_string(),
-            source: Box::new(e),
-        }),
+    // First, check environment variable for custom cert path
+    if let Ok(custom_path) = std::env::var(MINKNOW_TRUSTED_CA_ENV) {
+        let path = Path::new(&custom_path);
+        match tokio::fs::read_to_string(path).await {
+            Ok(content) => {
+                tracing::debug!(path = %custom_path, "Loaded CA cert from MINKNOW_TRUSTED_CA");
+                return Ok(content);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    path = %custom_path,
+                    error = %e,
+                    "MINKNOW_TRUSTED_CA set but failed to read certificate"
+                );
+                // Fall through to try default paths
+            }
+        }
     }
+
+    // Try platform-specific default paths
+    let mut last_error = None;
+    for path_str in MINKNOW_CA_CERT_PATHS {
+        let path = Path::new(path_str);
+        match tokio::fs::read_to_string(path).await {
+            Ok(content) => {
+                tracing::debug!(path = %path_str, "Loaded CA cert from default path");
+                return Ok(content);
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                tracing::trace!(path = %path_str, "CA cert not found, trying next path");
+                continue;
+            }
+            Err(e) => {
+                tracing::warn!(path = %path_str, error = %e, "Failed to read CA cert");
+                last_error = Some(e);
+            }
+        }
+    }
+
+    // No cert found - provide helpful error message
+    let paths_tried = MINKNOW_CA_CERT_PATHS.join(", ");
+    Err(ClientError::Connection {
+        endpoint: endpoint.to_string(),
+        source: if let Some(e) = last_error {
+            format!(
+                "Failed to read MinKNOW CA certificate: {}. Paths tried: {}. \
+                 You can set MINKNOW_TRUSTED_CA environment variable to specify a custom path.",
+                e, paths_tried
+            )
+            .into()
+        } else {
+            format!(
+                "MinKNOW CA certificate not found. Paths tried: {}. Is MinKNOW installed? \
+                 You can set MINKNOW_TRUSTED_CA environment variable to specify a custom path.",
+                paths_tried
+            )
+            .into()
+        },
+    })
 }
 
 #[derive(Debug, Clone)]
