@@ -13,7 +13,7 @@ pub use app::{
 };
 pub use event::{Action, Event, EventHandler};
 
-use crate::client::Client;
+use crate::client::{Client, RunState};
 use crate::config::Config;
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
@@ -317,19 +317,32 @@ async fn refresh_data(app: &mut App, client: &mut Client) {
 
             for (idx, pos) in positions.iter().enumerate() {
                 if let Ok(mut pos_client) = client.connect_position(pos.clone()).await {
+                    let fc_info = pos_client.get_flow_cell_info().await.ok();
+                    let has_flow_cell = fc_info.as_ref().map(|f| f.has_flow_cell).unwrap_or(false);
+
+                    if let Some(info) = fc_info {
+                        app.update_flow_cell_info(&pos.name, info);
+                    }
+
+                    if !has_flow_cell {
+                        app.update_run_state(&pos.name, RunState::Idle);
+                        continue;
+                    }
+
                     let run_state = pos_client.get_run_state().await.ok();
                     if let Some(ref state) = run_state {
                         app.update_run_state(&pos.name, state.clone());
                     }
 
-                    let has_run = run_state
-                        .as_ref()
-                        .map(|s| s.has_displayable_run())
-                        .unwrap_or(false);
+                    let is_active = run_state.as_ref().map(|s| s.is_active()).unwrap_or(false);
 
-                    if has_run {
+                    if is_active {
                         if let Ok(stats) = pos_client.get_stats().await {
                             app.update_stats(&pos.name, stats);
+                        }
+
+                        if let Ok(Some(info)) = pos_client.get_run_info().await {
+                            app.update_run_info(&pos.name, info);
                         }
 
                         if in_detail_view && detail_position_idx == Some(idx) {

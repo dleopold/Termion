@@ -1,8 +1,8 @@
 //! Position-specific client for acquisition and statistics services.
 
 use super::{
-    ChannelState, ClientError, DutyTimeSnapshot, Position, ReadLengthHistogram, RunState,
-    StatsSnapshot, YieldDataPoint,
+    ChannelState, ClientError, DutyTimeSnapshot, FlowCellInfo, Position, ReadLengthHistogram,
+    RunState, StatsSnapshot, YieldDataPoint,
 };
 use crate::proto::minknow_api::acquisition::{
     acquisition_service_client::AcquisitionServiceClient, CurrentStatusRequest,
@@ -12,7 +12,7 @@ use crate::proto::minknow_api::data::{
     data_service_client::DataServiceClient, GetChannelStatesRequest,
 };
 use crate::proto::minknow_api::device::{
-    device_service_client::DeviceServiceClient, GetChannelsLayoutRequest,
+    device_service_client::DeviceServiceClient, GetChannelsLayoutRequest, GetFlowCellInfoRequest,
 };
 use crate::proto::minknow_api::protocol::{
     protocol_service_client::ProtocolServiceClient, GetCurrentProtocolRunRequest,
@@ -200,6 +200,72 @@ impl PositionClient {
             ProtocolPhase::PhaseCompleted => Some(RunState::Finishing),
             ProtocolPhase::PhaseUnknown => None,
         }
+    }
+
+    pub async fn get_run_info(&mut self) -> Result<Option<super::RunInfo>, ClientError> {
+        let response = self
+            .protocol
+            .get_current_protocol_run(GetCurrentProtocolRunRequest {})
+            .await;
+
+        match response {
+            Ok(resp) => {
+                let info = resp.into_inner();
+                let user_info = info.user_info;
+
+                let experiment_group = user_info
+                    .as_ref()
+                    .and_then(|ui| ui.protocol_group_id.clone())
+                    .filter(|s| !s.is_empty());
+
+                let sample_id = user_info
+                    .as_ref()
+                    .and_then(|ui| ui.sample_id.clone())
+                    .filter(|s| !s.is_empty());
+
+                if experiment_group.is_some() || sample_id.is_some() {
+                    Ok(Some(super::RunInfo {
+                        experiment_group,
+                        sample_id,
+                    }))
+                } else {
+                    Ok(None)
+                }
+            }
+            Err(status) if status.code() == tonic::Code::FailedPrecondition => Ok(None),
+            Err(status) => Err(ClientError::Grpc {
+                method: "get_current_protocol_run".into(),
+                status,
+            }),
+        }
+    }
+
+    pub async fn get_flow_cell_info(&mut self) -> Result<FlowCellInfo, ClientError> {
+        let response = self
+            .device
+            .get_flow_cell_info(GetFlowCellInfoRequest {})
+            .await
+            .map_err(|status| ClientError::Grpc {
+                method: "get_flow_cell_info".into(),
+                status,
+            })?
+            .into_inner();
+
+        Ok(FlowCellInfo {
+            has_flow_cell: response.has_flow_cell,
+            flow_cell_id: if response.flow_cell_id.is_empty() {
+                None
+            } else {
+                Some(response.flow_cell_id)
+            },
+            product_code: if response.product_code.is_empty() {
+                None
+            } else {
+                Some(response.product_code)
+            },
+            has_adapter: response.has_adapter,
+            channel_count: response.channel_count,
+        })
     }
 
     pub async fn get_acquisition_info(&mut self) -> Result<AcquisitionInfo, ClientError> {

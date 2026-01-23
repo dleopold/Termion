@@ -2,8 +2,8 @@
 
 use super::theme::Theme;
 use crate::client::{
-    ChannelLayout, ChannelStatesSnapshot, DutyTimeSnapshot, Position, ReadLengthHistogram,
-    RunState, StatsSnapshot, YieldDataPoint,
+    ChannelLayout, ChannelStatesSnapshot, DutyTimeSnapshot, FlowCellInfo, Position,
+    ReadLengthHistogram, RunInfo, RunState, StatsSnapshot, YieldDataPoint,
 };
 use crate::config::Config;
 use std::collections::{HashMap, VecDeque};
@@ -111,6 +111,8 @@ pub struct App {
     pub duty_time: HashMap<String, DutyTimeSnapshot>,
     pub channel_states: HashMap<String, ChannelStatesSnapshot>,
     pub channel_layouts: HashMap<String, ChannelLayout>,
+    pub run_info: HashMap<String, RunInfo>,
+    pub flow_cell_info: HashMap<String, FlowCellInfo>,
 }
 
 pub struct ChartBuffer {
@@ -163,7 +165,13 @@ impl App {
             duty_time: HashMap::new(),
             channel_states: HashMap::new(),
             channel_layouts: HashMap::new(),
+            run_info: HashMap::new(),
+            flow_cell_info: HashMap::new(),
         }
+    }
+
+    pub fn update_flow_cell_info(&mut self, position_name: &str, info: FlowCellInfo) {
+        self.flow_cell_info.insert(position_name.to_string(), info);
     }
 
     pub fn update_channel_states(&mut self, position_name: &str, states: ChannelStatesSnapshot) {
@@ -192,10 +200,17 @@ impl App {
     }
 
     pub fn enter_detail(&mut self) {
-        if !self.positions.is_empty() {
-            self.screen = Screen::PositionDetail {
-                position_idx: self.selected_position,
-            };
+        if let Some(pos) = self.positions.get(self.selected_position) {
+            let is_active = self
+                .run_states
+                .get(&pos.name)
+                .map(|s| s.is_active())
+                .unwrap_or(false);
+            if is_active {
+                self.screen = Screen::PositionDetail {
+                    position_idx: self.selected_position,
+                };
+            }
         }
     }
 
@@ -294,14 +309,19 @@ impl App {
     }
 
     pub fn update_run_state(&mut self, position_name: &str, state: RunState) {
-        if !state.has_displayable_run() {
+        if !state.is_active() {
             self.stats_cache.remove(position_name);
             self.yield_history.remove(position_name);
             self.histograms.remove(position_name);
             self.duty_time.remove(position_name);
             self.channel_states.remove(position_name);
+            self.run_info.remove(position_name);
         }
         self.run_states.insert(position_name.to_string(), state);
+    }
+
+    pub fn update_run_info(&mut self, position_name: &str, info: RunInfo) {
+        self.run_info.insert(position_name.to_string(), info);
     }
 
     pub fn get_run_state(&self, position_name: &str) -> Option<&RunState> {
@@ -474,7 +494,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::PositionState;
+    use crate::client::{DeviceType, PositionState};
 
     fn test_config() -> Config {
         Config::default()
@@ -488,6 +508,7 @@ mod tests {
             state: PositionState::Idle,
             grpc_port: 8000,
             is_simulated: false,
+            device_type: DeviceType::MinION,
         }
     }
 
@@ -572,11 +593,20 @@ mod tests {
     }
 
     #[test]
-    fn test_enter_detail_with_positions() {
+    fn test_enter_detail_with_run() {
+        let mut app = App::new(test_config());
+        app.positions = vec![test_position("A")];
+        app.run_states.insert("A".to_string(), RunState::Running);
+        app.enter_detail();
+        assert_eq!(app.screen, Screen::PositionDetail { position_idx: 0 });
+    }
+
+    #[test]
+    fn test_enter_detail_no_run() {
         let mut app = App::new(test_config());
         app.positions = vec![test_position("A")];
         app.enter_detail();
-        assert_eq!(app.screen, Screen::PositionDetail { position_idx: 0 });
+        assert_eq!(app.screen, Screen::Overview);
     }
 
     #[test]

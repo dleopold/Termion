@@ -3,6 +3,7 @@
 //! These types provide a stable API separate from proto-generated types,
 //! allowing internal changes without breaking consumers.
 
+use crate::proto::minknow_api::device::get_device_info_response::DeviceType as ProtoDeviceType;
 use crate::proto::minknow_api::manager::{flow_cell_position, FlowCellPosition};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -37,6 +38,45 @@ pub enum DeviceState {
     Offline,
 }
 
+/// Type of sequencing device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+pub enum DeviceType {
+    #[default]
+    Unknown,
+    MinION,
+    GridION,
+    PromethION,
+    P2Solo,
+    P2Integrated,
+    Pebble,
+}
+
+impl DeviceType {
+    pub fn from_proto(proto: i32) -> Self {
+        match ProtoDeviceType::try_from(proto) {
+            Ok(ProtoDeviceType::Minion) | Ok(ProtoDeviceType::MinionMk1d) => DeviceType::MinION,
+            Ok(ProtoDeviceType::Gridion) => DeviceType::GridION,
+            Ok(ProtoDeviceType::Promethion) => DeviceType::PromethION,
+            Ok(ProtoDeviceType::P2Solo) => DeviceType::P2Solo,
+            Ok(ProtoDeviceType::P2Integrated) => DeviceType::P2Integrated,
+            Ok(ProtoDeviceType::Pebble) => DeviceType::Pebble,
+            _ => DeviceType::Unknown,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            DeviceType::Unknown => "Unknown",
+            DeviceType::MinION => "MinION",
+            DeviceType::GridION => "GridION",
+            DeviceType::PromethION => "PromethION",
+            DeviceType::P2Solo => "P2 Solo",
+            DeviceType::P2Integrated => "P2",
+            DeviceType::Pebble => "Pebble",
+        }
+    }
+}
+
 /// A sequencing position on a device.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Position {
@@ -57,6 +97,9 @@ pub struct Position {
 
     /// Whether this is a simulated device.
     pub is_simulated: bool,
+
+    /// Type of device (MinION, GridION, etc.).
+    pub device_type: DeviceType,
 }
 
 impl Position {
@@ -83,6 +126,8 @@ impl Position {
             proto.parent_name
         };
 
+        let device_type = DeviceType::from_proto(proto.device_type);
+
         Self {
             id: proto.name.clone(),
             name: proto.name,
@@ -90,6 +135,7 @@ impl Position {
             state,
             grpc_port,
             is_simulated: proto.is_simulated,
+            device_type,
         }
     }
 }
@@ -109,6 +155,41 @@ pub enum PositionState {
 
     /// Position has an error condition.
     Error,
+}
+
+/// Protocol run information for display purposes.
+#[derive(Debug, Clone, Default)]
+pub struct RunInfo {
+    /// The experiment/protocol group ID (user-specified when starting protocol).
+    pub experiment_group: Option<String>,
+
+    /// The sample ID (user-specified when starting protocol).
+    pub sample_id: Option<String>,
+}
+
+impl RunInfo {
+    /// Returns a display string combining experiment_group and sample_id.
+    /// Format: "experiment_group" or "experiment_group / sample_id" if sample_id exists.
+    pub fn display_label(&self) -> Option<String> {
+        match (&self.experiment_group, &self.sample_id) {
+            (Some(group), Some(sample)) if !sample.is_empty() => {
+                Some(format!("{} / {}", group, sample))
+            }
+            (Some(group), _) => Some(group.clone()),
+            (None, Some(sample)) if !sample.is_empty() => Some(sample.clone()),
+            _ => None,
+        }
+    }
+}
+
+/// Flow cell information for a position.
+#[derive(Debug, Clone, Default)]
+pub struct FlowCellInfo {
+    pub has_flow_cell: bool,
+    pub flow_cell_id: Option<String>,
+    pub product_code: Option<String>,
+    pub has_adapter: bool,
+    pub channel_count: u32,
 }
 
 /// Acquisition run state.
@@ -133,9 +214,6 @@ pub enum RunState {
     /// Acquisition is finishing up.
     Finishing,
 
-    /// Acquisition has stopped.
-    Stopped,
-
     /// Acquisition encountered an error.
     Error(String),
 }
@@ -153,12 +231,6 @@ impl RunState {
         )
     }
 
-    /// Returns true if stats should be displayed for this run state.
-    /// Only shows stats for positions with active or recently-stopped runs.
-    pub fn has_displayable_run(&self) -> bool {
-        !matches!(self, RunState::Idle)
-    }
-
     /// Returns a short label for display.
     pub fn label(&self) -> &'static str {
         match self {
@@ -168,7 +240,6 @@ impl RunState {
             RunState::MuxScanning => "Pore Scan",
             RunState::Paused => "Paused",
             RunState::Finishing => "Finishing",
-            RunState::Stopped => "Stopped",
             RunState::Error(_) => "Error",
         }
     }
@@ -508,7 +579,6 @@ mod tests {
         assert!(RunState::MuxScanning.is_active());
         assert!(RunState::Paused.is_active());
         assert!(RunState::Finishing.is_active());
-        assert!(!RunState::Stopped.is_active());
         assert!(!RunState::Error("test".into()).is_active());
     }
 
@@ -520,7 +590,6 @@ mod tests {
         assert_eq!(RunState::MuxScanning.label(), "Pore Scan");
         assert_eq!(RunState::Paused.label(), "Paused");
         assert_eq!(RunState::Finishing.label(), "Finishing");
-        assert_eq!(RunState::Stopped.label(), "Stopped");
         assert_eq!(RunState::Error("oops".into()).label(), "Error");
     }
 

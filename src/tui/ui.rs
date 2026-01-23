@@ -109,91 +109,183 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(header, area);
 }
 
+struct RowData {
+    idx: usize,
+    position: String,
+    device: String,
+    flow_cell: String,
+    state: String,
+    run: String,
+    reads: String,
+    bases: String,
+    throughput: String,
+    error: String,
+}
+
 fn render_position_table(frame: &mut Frame, app: &App, area: Rect) {
     let t = &app.theme;
-    let header = Row::new(vec![
-        "Position",
-        "State",
-        "Run ID",
-        "Reads",
-        "Bases",
-        "Throughput",
-    ])
-    .style(Style::default().bold())
-    .bottom_margin(1);
 
-    let rows: Vec<Row> = app
+    let row_data: Vec<RowData> = app
         .positions
         .iter()
         .enumerate()
         .map(|(idx, pos)| {
-            let stats = app.stats_cache.get(&pos.name);
-            let has_run_data = stats.map(|s| s.reads_processed > 0).unwrap_or(false);
-
             let run_state = app.run_states.get(&pos.name);
+            let is_active = run_state.map(|s| s.is_active()).unwrap_or(false);
+
             let state_indicator = match run_state {
                 Some(RunState::Running) => "● Running",
                 Some(RunState::MuxScanning) => "◉ Pore Scan",
                 Some(RunState::Paused) => "⏸ Paused",
                 Some(RunState::Starting) => "◐ Starting",
                 Some(RunState::Finishing) => "◑ Finishing",
-                Some(RunState::Stopped) => "○ Stopped",
                 Some(RunState::Error(_)) => "✖ Error",
-                Some(RunState::Idle) if has_run_data => "○ Stopped",
                 Some(RunState::Idle) | None => match pos.state {
-                    PositionState::Running => "○ Idle",
-                    PositionState::Idle => "○ Idle",
                     PositionState::Error => "✖ Error",
-                    _ => "? Unknown",
+                    _ => "○ Idle",
                 },
             };
 
-            let reads = stats
-                .map(|s| format_number(s.reads_processed))
-                .unwrap_or_else(|| "--".to_string());
+            let stats = app.stats_cache.get(&pos.name);
 
-            let bases = stats
-                .map(|s| format_bytes(s.bases_called))
-                .unwrap_or_else(|| "--".to_string());
-
-            let throughput = match run_state {
-                Some(RunState::Running) => stats
-                    .map(|s| format_throughput_gbph(s.throughput_gbph))
-                    .unwrap_or_else(|| "--".to_string()),
-                _ => "--".to_string(),
+            let reads = if is_active {
+                stats
+                    .map(|s| format_number(s.reads_processed))
+                    .unwrap_or_else(|| "--".to_string())
+            } else {
+                "--".to_string()
             };
 
-            let run_id = stats
-                .map(|_| pos.name.clone())
-                .unwrap_or_else(|| "--".to_string());
+            let bases = if is_active {
+                stats
+                    .map(|s| format_bytes(s.bases_called))
+                    .unwrap_or_else(|| "--".to_string())
+            } else {
+                "--".to_string()
+            };
 
-            let style = if idx == app.selected_position {
+            let throughput = if is_active {
+                stats
+                    .map(|s| format_throughput_gbph(s.throughput_gbph))
+                    .unwrap_or_else(|| "--".to_string())
+            } else {
+                "--".to_string()
+            };
+
+            let run_label = if is_active {
+                app.run_info
+                    .get(&pos.name)
+                    .and_then(|info| info.display_label())
+                    .unwrap_or_else(|| "--".to_string())
+            } else {
+                "--".to_string()
+            };
+
+            let device = pos.device_type.label().to_string();
+
+            let flow_cell = app
+                .flow_cell_info
+                .get(&pos.name)
+                .map(|fc| {
+                    if fc.has_flow_cell {
+                        fc.flow_cell_id.as_deref().unwrap_or("✓")
+                    } else {
+                        "✗"
+                    }
+                })
+                .unwrap_or("--")
+                .to_string();
+
+            let error = match run_state {
+                Some(RunState::Error(msg)) => msg.clone(),
+                _ if pos.state == PositionState::Error => "Hardware error".to_string(),
+                _ => String::new(),
+            };
+
+            RowData {
+                idx,
+                position: pos.name.clone(),
+                device,
+                flow_cell,
+                state: state_indicator.to_string(),
+                run: run_label,
+                reads,
+                bases,
+                throughput,
+                error,
+            }
+        })
+        .collect();
+
+    const PADDING: u16 = 2;
+    let col_width = |header: &str, values: &[&str]| -> u16 {
+        let max_content = values.iter().map(|s| s.chars().count()).max().unwrap_or(0);
+        max_content.max(header.len()) as u16 + PADDING
+    };
+
+    let headers = [
+        "State",
+        "Device",
+        "Position",
+        "FlowCell",
+        "Run",
+        "Reads",
+        "Bases",
+        "Throughput",
+        "",
+    ];
+
+    let widths: Vec<Constraint> = headers
+        .iter()
+        .enumerate()
+        .map(|(i, &h)| {
+            let values: Vec<&str> = row_data
+                .iter()
+                .map(|r| match i {
+                    0 => r.state.as_str(),
+                    1 => r.device.as_str(),
+                    2 => r.position.as_str(),
+                    3 => r.flow_cell.as_str(),
+                    4 => r.run.as_str(),
+                    5 => r.reads.as_str(),
+                    6 => r.bases.as_str(),
+                    7 => r.throughput.as_str(),
+                    8 => r.error.as_str(),
+                    _ => "",
+                })
+                .collect();
+            Constraint::Length(col_width(h, &values))
+        })
+        .collect();
+
+    let header = Row::new(headers.to_vec())
+        .style(Style::default().bold())
+        .bottom_margin(1);
+
+    let rows: Vec<Row> = row_data
+        .into_iter()
+        .map(|r| {
+            let style = if r.idx == app.selected_position {
                 Style::default().bg(t.selection_bg).fg(t.selection_fg)
             } else {
                 Style::default()
             };
 
             Row::new(vec![
-                pos.name.clone(),
-                state_indicator.to_string(),
-                run_id,
-                reads,
-                bases,
-                throughput,
+                r.state,
+                r.device,
+                r.position,
+                r.flow_cell,
+                r.run,
+                r.reads,
+                r.bases,
+                r.throughput,
+                r.error,
             ])
             .style(style)
             .height(1)
         })
         .collect();
-
-    let widths = [
-        Constraint::Length(12),
-        Constraint::Length(12),
-        Constraint::Length(20),
-        Constraint::Length(10),
-        Constraint::Length(12),
-        Constraint::Length(12),
-    ];
 
     let table = Table::new(rows, widths)
         .header(header)
@@ -270,8 +362,7 @@ fn render_position_detail(frame: &mut Frame, app: &App, position_idx: usize, are
         .split(area);
 
     let run_state = app.get_run_state(&position.name);
-    let has_run_data = stats.map(|s| s.reads_processed > 0).unwrap_or(false);
-    render_detail_header(frame, t, position, run_state, has_run_data, chunks[0]);
+    render_detail_header(frame, t, position, run_state, chunks[0]);
     let histogram = app.histograms.get(&position.name);
     render_run_info(frame, t, position, stats, histogram, run_state, chunks[1]);
 
@@ -303,7 +394,6 @@ fn render_detail_header(
     t: &Theme,
     position: &Position,
     run_state: Option<&RunState>,
-    has_run_data: bool,
     area: Rect,
 ) {
     let (state_color, state_indicator) = match run_state {
@@ -312,14 +402,10 @@ fn render_detail_header(
         Some(RunState::Paused) => (t.warning, "⏸ Paused"),
         Some(RunState::Starting) => (t.info, "◐ Starting"),
         Some(RunState::Finishing) => (t.warning, "◑ Finishing"),
-        Some(RunState::Stopped) => (t.idle, "○ Stopped"),
         Some(RunState::Error(_)) => (t.error, "✖ Error"),
-        Some(RunState::Idle) if has_run_data => (t.idle, "○ Stopped"),
         Some(RunState::Idle) | None => match position.state {
-            PositionState::Running => (t.idle, "○ Idle"),
-            PositionState::Idle => (t.idle, "○ Idle"),
             PositionState::Error => (t.error, "✖ Error"),
-            _ => (t.text, "? Unknown"),
+            _ => (t.idle, "○ Idle"),
         },
     };
 
