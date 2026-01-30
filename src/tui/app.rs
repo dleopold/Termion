@@ -113,6 +113,8 @@ pub struct App {
     pub channel_layouts: HashMap<String, ChannelLayout>,
     pub run_info: HashMap<String, RunInfo>,
     pub flow_cell_info: HashMap<String, FlowCellInfo>,
+    /// Tracks when throughput was last calculated for each position (for throttling).
+    pub throughput_last_calc: HashMap<String, Instant>,
 }
 
 pub struct ChartBuffer {
@@ -167,6 +169,7 @@ impl App {
             channel_layouts: HashMap::new(),
             run_info: HashMap::new(),
             flow_cell_info: HashMap::new(),
+            throughput_last_calc: HashMap::new(),
         }
     }
 
@@ -304,7 +307,12 @@ impl App {
         }
     }
 
-    pub fn update_stats(&mut self, position_name: &str, stats: StatsSnapshot) {
+    pub fn update_stats(&mut self, position_name: &str, mut stats: StatsSnapshot) {
+        // Preserve existing throughput values (calculated separately from yield history)
+        if let Some(existing) = self.stats_cache.get(position_name) {
+            stats.throughput_bps = existing.throughput_bps;
+            stats.throughput_gbph = existing.throughput_gbph;
+        }
         self.stats_cache.insert(position_name.to_string(), stats);
     }
 
@@ -488,6 +496,21 @@ impl App {
 
     pub fn update_duty_time(&mut self, position_name: &str, duty_time: DutyTimeSnapshot) {
         self.duty_time.insert(position_name.to_string(), duty_time);
+    }
+
+    /// Returns true if throughput should be calculated for this position.
+    /// Throttles calculation to once every 5 seconds per position.
+    pub fn should_calc_throughput(&self, position: &str) -> bool {
+        self.throughput_last_calc
+            .get(position)
+            .map(|t| t.elapsed() >= std::time::Duration::from_secs(5))
+            .unwrap_or(true)
+    }
+
+    /// Marks that throughput was just calculated for this position.
+    pub fn mark_throughput_calculated(&mut self, position: &str) {
+        self.throughput_last_calc
+            .insert(position.to_string(), Instant::now());
     }
 }
 

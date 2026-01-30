@@ -341,6 +341,32 @@ async fn refresh_data(app: &mut App, client: &mut Client) {
                             app.update_stats(&pos.name, stats);
                         }
 
+                        // Throttled throughput calculation for overview table
+                        if app.should_calc_throughput(&pos.name) {
+                            if let Ok(Some(run_id)) = pos_client.get_current_run_id().await {
+                                match pos_client.get_yield_history(&run_id).await {
+                                    Ok(points) if points.len() >= 2 => {
+                                        if let Some(stats) = app.stats_cache.get_mut(&pos.name) {
+                                            let recent = &points[points.len() - 1];
+                                            let prev = &points[points.len() - 2];
+                                            let time_delta = (recent.seconds - prev.seconds).max(1) as f64;
+                                            let bases_delta = recent.bases.saturating_sub(prev.bases) as f64;
+                                            stats.throughput_bps = bases_delta / time_delta;
+                                            stats.throughput_gbph = stats.throughput_bps * 3600.0 / 1_000_000_000.0;
+                                            tracing::debug!(position = %pos.name, throughput_gbph = stats.throughput_gbph, "Calculated throughput for overview");
+                                        }
+                                    }
+                                    Ok(_) => {
+                                        tracing::debug!(position = %pos.name, "Insufficient yield points for throughput");
+                                    }
+                                    Err(e) => {
+                                        tracing::debug!(position = %pos.name, error = %e.display_message(), "Yield history failed for throughput");
+                                    }
+                                }
+                            }
+                            app.mark_throughput_calculated(&pos.name);
+                        }
+
                         if let Ok(Some(info)) = pos_client.get_run_info().await {
                             app.update_run_info(&pos.name, info);
                         }
