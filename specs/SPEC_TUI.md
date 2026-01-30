@@ -140,9 +140,9 @@ Per decision D4.1: Overview → Position Detail → Overlay
 
 ---
 
-### 2a. Pore Activity Panel (Position Detail)
+### 2a. Pore Activity Panel (MinION)
 
-**Purpose:** Visualize real-time channel/pore states on the physical flow cell layout.
+**Purpose:** Visualize real-time channel/pore states on the physical MinION flow cell layout.
 
 ```
 ┌─ Position 1 ── MinION Mk1C ── Running ────────────────────────┐
@@ -190,12 +190,59 @@ Per decision D4.1: Overview → Position Detail → Overlay
 - Footer: Panel navigation hints
 
 **Layout Details:**
-- MinION flow cells have 512 channels in a 32-column × 16-row grid
-- Physical coordinates are sparse (Y values like 10,13,18,21...) 
-- Coordinates are normalized to consecutive 0-15 row indices for display
-- Gap rendered between rows 7 and 8 (separating the two physical blocks)
-- Grid is centered horizontally and vertically in available space
-- Cell size scales uniformly when space is constrained
+- **Total Channels:** 512
+- **Grid:** 32 columns × 16 rows
+- **Physical Layout:** Two vertical blocks of 32×8
+- **Gap:** Rendered between rows 7 and 8 (separating the two physical blocks)
+- **Coordinates:** Physical coordinates are sparse; normalized to consecutive 0-15 row indices for display
+- **Sizing:** Dynamic cell sizing (1-char or 2-char) based on terminal width
+- **Small Terminals:** If space is insufficient, show partial grid with "[...more]" indicator
+
+---
+
+### 2b. Pore Activity Panel (PromethION)
+
+**Purpose:** Visualize real-time channel/pore states on the physical PromethION flow cell layout.
+
+```
+┌─ Position 1 ── PromethION ── Running ─────────────────────────┐
+│                                                                │
+│  Run: experiment_2026_01_20    Protocol: LSK114               │
+│  Started: 10:23:45             Elapsed: 02:34:12              │
+│                                                                │
+│  ┌─ Channel Map ───────────────────────────────────────────┐  │
+│  │                                                          │  │
+│  │    ┌─ Q1 (63x12) ─┐      ┌─ Q2 (63x12) ─┐                │  │
+│  │    │ ████████████ │      │ ████████████ │                │  │
+│  │    │ ████████████ │      │ ████████████ │                │  │
+│  │    └──────────────┘      └──────────────┘                │  │
+│  │          (gap)                (gap)                      │  │
+│  │    ┌─ Q3 (63x13) ─┐      ┌─ Q4 (63x13) ─┐                │  │
+│  │    │ ████████████ │      │ ████████████ │                │  │
+│  │    │ ████████████ │      │ ████████████ │                │  │
+│  │    └──────────────┘      └──────────────┘                │  │
+│  │                                                          │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                │
+│  ┌─ Channel States ────────────────────────────────────────┐  │
+│  │  strand: 1450   pore: 856    adapter: 123   pending: 571   │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                │
+│  [1] Stats  [2] Charts  [3] Pore  [Esc] Back  [?] Help        │
+└───────────────────────────────────────────────────────────────┘
+```
+
+**Layout Details:**
+- **Total Channels:** 3000
+- **Grid:** 126 columns × 25 rows (physical), displayed as 4 quadrants
+- **Quadrant Arrangement:** 2×2 grid matching MinKNOW GUI
+  - Q1 (Top-Left): 63 columns × 12 rows
+  - Q2 (Top-Right): 63 columns × 12 rows
+  - Q3 (Bottom-Left): 63 columns × 13 rows
+  - Q4 (Bottom-Right): 63 columns × 13 rows
+- **Gaps:** Vertical and horizontal gaps between quadrants
+- **Sizing:** Dynamic cell sizing (1-char or 2-char) based on terminal width
+- **Small Terminals:** If space is insufficient, show partial grid with "[...more]" indicator
 
 ---
 
