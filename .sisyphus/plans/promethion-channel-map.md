@@ -482,7 +482,7 @@ Critical Path: Task 1 → Tasks 2,3 (parallel) → Task 4 → Task 5 → Task 7
 
 ---
 
-- [ ] 5. Add terminal-too-small indicator
+- [x] 5. Add terminal-too-small indicator
 
   **What to do**:
   - Detect when terminal is too small to display meaningful channel map
