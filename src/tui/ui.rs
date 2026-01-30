@@ -55,6 +55,8 @@ pub enum BlockArrangement {
     TwoVertical,
     /// PromethION: 2×2 grid of quadrants
     FourQuadrant,
+    /// PromethION: 4 quadrants stacked vertically (1×4)
+    FourVertical,
 }
 
 /// Specifies the position of a gap in the channel grid.
@@ -1579,17 +1581,17 @@ fn calculate_cell_dimensions(
     screen_height: usize,
     block_arrangement: &BlockArrangement,
 ) -> (usize, usize) {
-    // Calculate space needed for gaps between blocks
     let gap_cols = match block_arrangement {
         BlockArrangement::TwoVertical => 0,
-        BlockArrangement::FourQuadrant => 1, // Vertical gap between left/right quadrants
+        BlockArrangement::FourQuadrant => 1,
+        BlockArrangement::FourVertical => 0,
     };
     let gap_rows = match block_arrangement {
-        BlockArrangement::TwoVertical => 1, // Horizontal gap between top/bottom blocks
-        BlockArrangement::FourQuadrant => 1, // Horizontal gap between top/bottom quadrants
+        BlockArrangement::TwoVertical => 1,
+        BlockArrangement::FourQuadrant => 1,
+        BlockArrangement::FourVertical => 3,
     };
 
-    // Try 2-character cells first
     let width_needed_2char = (grid_cols * 2) + gap_cols;
     let height_needed = grid_rows + gap_rows;
 
@@ -1599,7 +1601,7 @@ fn calculate_cell_dimensions(
         1
     };
 
-    let cell_height = 1; // Always 1 row per channel row
+    let cell_height = 1;
 
     (cell_width, cell_height)
 }
@@ -1637,13 +1639,28 @@ fn calculate_grid_structure(
             }
         }
         FlowCellType::PromethION => {
-            let grid_cols = 126;
-            let grid_rows = 25;
-            let block_arrangement = BlockArrangement::FourQuadrant;
-            let gap_positions = vec![
-                GapPosition::Vertical { after_col: 62 },
-                GapPosition::Horizontal { after_row: 11 },
-            ];
+            let (block_arrangement, grid_cols, grid_rows, gap_positions) = if screen_width >= 127 {
+                (
+                    BlockArrangement::FourQuadrant,
+                    126,
+                    25,
+                    vec![
+                        GapPosition::Vertical { after_col: 62 },
+                        GapPosition::Horizontal { after_row: 11 },
+                    ],
+                )
+            } else {
+                (
+                    BlockArrangement::FourVertical,
+                    63,
+                    53,
+                    vec![
+                        GapPosition::Horizontal { after_row: 12 },
+                        GapPosition::Horizontal { after_row: 25 },
+                        GapPosition::Horizontal { after_row: 39 },
+                    ],
+                )
+            };
 
             let (cell_width, _) = calculate_cell_dimensions(
                 grid_cols,
@@ -1816,11 +1833,10 @@ mod tests {
     #[test]
     fn test_promethion_layout_3000_channels_four_quadrants() {
         let layout = create_promethion_layout();
-        let result = calculate_grid_structure(&layout, 120, 30);
+        let result = calculate_grid_structure(&layout, 150, 30);
         assert_eq!(result.flow_cell_type, FlowCellType::PromethION);
         assert_eq!(result.block_arrangement, BlockArrangement::FourQuadrant);
         assert_eq!(result.gap_positions.len(), 2);
-        // Gaps can be in any order
         assert!(result
             .gap_positions
             .contains(&GapPosition::Vertical { after_col: 62 }));
@@ -1912,5 +1928,28 @@ mod tests {
             terminal.backend().buffer().content.len() > 0,
             "Buffer should contain rendered content"
         );
+    }
+
+    #[test]
+    fn test_promethion_uses_quadrant_in_wide_terminal() {
+        let layout = create_promethion_layout();
+        let result = calculate_grid_structure(&layout, 260, 30);
+        assert_eq!(result.block_arrangement, BlockArrangement::FourQuadrant);
+        assert_eq!(result.cell_width, 2);
+    }
+
+    #[test]
+    fn test_promethion_uses_quadrant_1char_in_medium_terminal() {
+        let layout = create_promethion_layout();
+        let result = calculate_grid_structure(&layout, 150, 30);
+        assert_eq!(result.block_arrangement, BlockArrangement::FourQuadrant);
+        assert_eq!(result.cell_width, 1);
+    }
+
+    #[test]
+    fn test_promethion_uses_vertical_in_narrow_terminal() {
+        let layout = create_promethion_layout();
+        let result = calculate_grid_structure(&layout, 100, 30);
+        assert_eq!(result.block_arrangement, BlockArrangement::FourVertical);
     }
 }
