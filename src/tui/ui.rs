@@ -1471,6 +1471,57 @@ fn format_throughput_gbph(gbph: f64) -> String {
     }
 }
 
+/// Calculates dynamic cell dimensions for channel map rendering.
+///
+/// Determines the optimal cell width (1 or 2 characters) based on grid size
+/// and available screen space, accounting for gaps between blocks.
+///
+/// # Arguments
+///
+/// * `grid_cols` - Number of columns in the channel grid
+/// * `grid_rows` - Number of rows in the channel grid
+/// * `screen_width` - Available screen width in characters
+/// * `screen_height` - Available screen height in characters
+/// * `block_arrangement` - How channels are arranged (TwoVertical or FourQuadrant)
+///
+/// # Returns
+///
+/// A tuple of `(cell_width, cell_height)` where:
+/// - `cell_width` is 1 or 2 characters per cell
+/// - `cell_height` is always 1 row per cell
+#[allow(dead_code)]
+fn calculate_cell_dimensions(
+    grid_cols: usize,
+    grid_rows: usize,
+    screen_width: usize,
+    screen_height: usize,
+    block_arrangement: &BlockArrangement,
+) -> (usize, usize) {
+    // Calculate space needed for gaps between blocks
+    let gap_cols = match block_arrangement {
+        BlockArrangement::TwoVertical => 0,
+        BlockArrangement::FourQuadrant => 1, // Vertical gap between left/right quadrants
+    };
+    let gap_rows = match block_arrangement {
+        BlockArrangement::TwoVertical => 1,     // Horizontal gap between top/bottom blocks
+        BlockArrangement::FourQuadrant => 1,    // Horizontal gap between top/bottom quadrants
+    };
+
+    // Try 2-character cells first
+    let width_needed_2char = (grid_cols * 2) + gap_cols;
+    let height_needed = grid_rows + gap_rows;
+
+    let cell_width = if width_needed_2char <= screen_width && height_needed <= screen_height {
+        2
+    } else {
+        1
+    };
+
+    let cell_height = 1; // Always 1 row per channel row
+
+    (cell_width, cell_height)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1547,5 +1598,26 @@ mod tests {
         assert_eq!(grid.block_arrangement, BlockArrangement::TwoVertical);
         assert_eq!(grid.gap_positions.len(), 1);
         assert_eq!(grid.cell_width, 2);
+    }
+
+    #[test]
+    fn test_cell_dimensions_minion_80_wide() {
+        // 32×16 grid in 80-char terminal
+        let (cell_width, _) = calculate_cell_dimensions(32, 16, 80, 24, &BlockArrangement::TwoVertical);
+        assert_eq!(cell_width, 2); // 32*2=64 fits in 80
+    }
+
+    #[test]
+    fn test_cell_dimensions_promethion_80_wide() {
+        // 126×25 grid in 80-char terminal
+        let (cell_width, _) = calculate_cell_dimensions(126, 25, 80, 30, &BlockArrangement::FourQuadrant);
+        assert_eq!(cell_width, 1); // 126*2=252 doesn't fit, use 1-char
+    }
+
+    #[test]
+    fn test_cell_dimensions_promethion_260_wide() {
+        // 126×25 grid in 260-char terminal
+        let (cell_width, _) = calculate_cell_dimensions(126, 25, 260, 30, &BlockArrangement::FourQuadrant);
+        assert_eq!(cell_width, 2); // 126*2=252 fits in 260
     }
 }
