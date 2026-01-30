@@ -1522,6 +1522,67 @@ fn calculate_cell_dimensions(
     (cell_width, cell_height)
 }
 
+#[allow(dead_code)]
+fn calculate_grid_structure(
+    layout: &ChannelLayout,
+    screen_width: usize,
+    screen_height: usize,
+) -> GridStructure {
+    let flow_cell_type = FlowCellType::from_channel_count(layout.channel_count);
+
+    match flow_cell_type {
+        FlowCellType::MinION => {
+            let grid_cols = 32;
+            let grid_rows = 16;
+            let block_arrangement = BlockArrangement::TwoVertical;
+            let gap_positions = vec![GapPosition::Horizontal { after_row: 7 }];
+
+            let (cell_width, _) = calculate_cell_dimensions(
+                grid_cols,
+                grid_rows,
+                screen_width,
+                screen_height,
+                &block_arrangement,
+            );
+
+            GridStructure {
+                flow_cell_type,
+                grid_cols,
+                grid_rows,
+                block_arrangement,
+                gap_positions,
+                cell_width,
+            }
+        }
+        FlowCellType::PromethION => {
+            let grid_cols = 126;
+            let grid_rows = 25;
+            let block_arrangement = BlockArrangement::FourQuadrant;
+            let gap_positions = vec![
+                GapPosition::Vertical { after_col: 62 },
+                GapPosition::Horizontal { after_row: 11 },
+            ];
+
+            let (cell_width, _) = calculate_cell_dimensions(
+                grid_cols,
+                grid_rows,
+                screen_width,
+                screen_height,
+                &block_arrangement,
+            );
+
+            GridStructure {
+                flow_cell_type,
+                grid_cols,
+                grid_rows,
+                block_arrangement,
+                gap_positions,
+                cell_width,
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1619,5 +1680,74 @@ mod tests {
         // 126×25 grid in 260-char terminal
         let (cell_width, _) = calculate_cell_dimensions(126, 25, 260, 30, &BlockArrangement::FourQuadrant);
         assert_eq!(cell_width, 2); // 126*2=252 fits in 260
+    }
+
+    /// Creates a test MinION layout with 512 channels in a 32×16 grid.
+    fn create_minion_layout() -> ChannelLayout {
+        // 32×16 grid with 512 channels
+        // Coords: (0,0) to (31,15), sequential mapping
+        ChannelLayout {
+            channel_count: 512,
+            width: 32,
+            height: 16,
+            coords: (0..512)
+                .map(|i| ((i % 32) as u32, (i / 32) as u32))
+                .collect(),
+        }
+    }
+
+    /// Creates a test PromethION layout with 3000 channels in a 126×25 grid.
+    fn create_promethion_layout() -> ChannelLayout {
+        // 126×25 grid with 3000 channels (120 per row)
+        // Sparse Y: 0, 4, 8, ... 96 (25 unique Y values)
+        let mut coords = Vec::new();
+        for row in 0..25 {
+            let y = row * 4; // Sparse Y: 0, 4, 8, ..., 96
+            for col in 0..120 {
+                coords.push((col as u32, y));
+            }
+        }
+        ChannelLayout {
+            channel_count: 3000,
+            width: 126,
+            height: 25,
+            coords,
+        }
+    }
+
+    #[test]
+    fn test_minion_layout_512_channels_two_blocks() {
+        let layout = create_minion_layout();
+        let result = calculate_grid_structure(&layout, 80, 24);
+        assert_eq!(result.flow_cell_type, FlowCellType::MinION);
+        assert_eq!(result.block_arrangement, BlockArrangement::TwoVertical);
+        assert_eq!(result.gap_positions.len(), 1);
+        assert_eq!(result.gap_positions[0], GapPosition::Horizontal { after_row: 7 });
+    }
+
+    #[test]
+    fn test_promethion_layout_3000_channels_four_quadrants() {
+        let layout = create_promethion_layout();
+        let result = calculate_grid_structure(&layout, 120, 30);
+        assert_eq!(result.flow_cell_type, FlowCellType::PromethION);
+        assert_eq!(result.block_arrangement, BlockArrangement::FourQuadrant);
+        assert_eq!(result.gap_positions.len(), 2);
+        // Gaps can be in any order
+        assert!(result.gap_positions.contains(&GapPosition::Vertical { after_col: 62 }));
+        assert!(result.gap_positions.contains(&GapPosition::Horizontal { after_row: 11 }));
+    }
+
+    #[test]
+    fn test_dynamic_cell_width_narrow_terminal() {
+        let layout = create_promethion_layout();
+        let result = calculate_grid_structure(&layout, 60, 30); // Narrow
+        assert_eq!(result.cell_width, 1); // Must use 1-char cells
+    }
+
+    #[test]
+    fn test_dynamic_cell_width_wide_terminal() {
+        let layout = create_minion_layout();
+        let result = calculate_grid_structure(&layout, 120, 30); // Wide
+        assert_eq!(result.cell_width, 2); // Can use 2-char cells
     }
 }
