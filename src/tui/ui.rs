@@ -451,7 +451,14 @@ fn render_position_detail(frame: &mut Frame, app: &App, position_idx: usize, are
         DetailChart::PoreActivity => {
             let channel_states = app.channel_states.get(&position.name);
             let channel_layout = app.channel_layouts.get(&position.name);
-            render_pore_activity(frame, t, channel_states, channel_layout, chunks[2], app.channel_map_scroll_offset);
+            render_pore_activity(
+                frame,
+                t,
+                channel_states,
+                channel_layout,
+                chunks[2],
+                app.channel_map_scroll_offset,
+            );
         }
     }
 
@@ -926,19 +933,26 @@ fn render_pore_activity(
         .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
         .split(area);
 
-    render_pore_grid_from_states(frame, t, channel_states, channel_layout, chunks[0], scroll_offset);
+    render_pore_grid_from_states(
+        frame,
+        t,
+        channel_states,
+        channel_layout,
+        chunks[0],
+        scroll_offset,
+    );
     render_state_counts(frame, t, channel_states, chunks[1]);
 }
 
 /// Maps original PromethION coordinates (x, y) to vertical layout display coordinates (display_row, display_col).
-/// 
+///
 /// Original grid: 126 cols × 25 rows (2×2 quadrants)
 /// Vertical layout: 63 cols × 53 rows (4 quadrants stacked vertically with gaps)
-/// 
+///
 /// Quadrant boundaries:
 /// - Column split at x=63: left (0-62), right (63-125)
 /// - Row split at y=12: top (0-11), bottom (12-24)
-/// 
+///
 /// Vertical stack layout with gaps:
 /// - TL (rows 0-11): 12 rows
 /// - Gap (row 12): 1 row
@@ -950,7 +964,7 @@ fn render_pore_activity(
 fn map_to_vertical_layout(x: usize, y: usize) -> (usize, usize) {
     const COL_BOUNDARY: usize = 63;
     const ROW_BOUNDARY: usize = 12;
-    
+
     if x < COL_BOUNDARY && y < ROW_BOUNDARY {
         // Top-left quadrant: rows 0-11
         (y, x)
@@ -974,8 +988,32 @@ fn render_pore_grid_from_states(
     area: Rect,
     scroll_offset: usize,
 ) {
+    let screen_width = area.width as usize;
+    let screen_height = area.height as usize;
+
+    // Calculate visible rows (accounting for borders)
+    let visible_rows = screen_height.saturating_sub(2);
+
+    // Determine grid structure to get total rows
+    let total_rows = if let Some(layout) = channel_layout {
+        let gs = calculate_grid_structure(layout, screen_width, screen_height);
+        gs.grid_rows
+    } else {
+        let total_channels = channel_states.states.len();
+        (total_channels as f64).sqrt().ceil() as usize
+    };
+
+    // Build title with scroll indicator if scrolling is active
+    let title = if total_rows > visible_rows {
+        let start_row = scroll_offset + 1; // 1-indexed for users
+        let end_row = (scroll_offset + visible_rows).min(total_rows);
+        format!(" Channel Map [{}-{}/{}] ", start_row, end_row, total_rows)
+    } else {
+        " Channel Map ".to_string()
+    };
+
     let block = Block::default()
-        .title(" Channel Map ")
+        .title(title.clone())
         .borders(Borders::ALL)
         .border_style(Style::default().fg(t.warning));
 
@@ -991,7 +1029,7 @@ fn render_pore_grid_from_states(
 
     if screen_width < 20 || screen_height < 5 {
         let block = Block::default()
-            .title(" Channel Map ")
+            .title(title.clone())
             .borders(Borders::ALL)
             .border_style(Style::default().fg(t.warning));
         let message = Paragraph::new("Terminal too small - resize for full view")
@@ -1065,29 +1103,30 @@ fn render_pore_grid_from_states(
         .map(|gs| gs.block_arrangement == BlockArrangement::FourVertical)
         .unwrap_or(false);
 
-    let coord_to_channel: std::collections::HashMap<(u32, u32), usize> =
-        if let Some(layout) = channel_layout {
-            if is_four_vertical {
-                layout
-                    .coords
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, &(x, y))| {
-                        let (display_row, display_col) = map_to_vertical_layout(x as usize, y as usize);
-                        ((display_col as u32, display_row as u32), idx)
-                    })
-                    .collect()
-            } else {
-                layout
-                    .coords
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, &coord)| (coord, idx))
-                    .collect()
-            }
+    let coord_to_channel: std::collections::HashMap<(u32, u32), usize> = if let Some(layout) =
+        channel_layout
+    {
+        if is_four_vertical {
+            layout
+                .coords
+                .iter()
+                .enumerate()
+                .map(|(idx, &(x, y))| {
+                    let (display_row, display_col) = map_to_vertical_layout(x as usize, y as usize);
+                    ((display_col as u32, display_row as u32), idx)
+                })
+                .collect()
         } else {
-            std::collections::HashMap::new()
-        };
+            layout
+                .coords
+                .iter()
+                .enumerate()
+                .map(|(idx, &coord)| (coord, idx))
+                .collect()
+        }
+    } else {
+        std::collections::HashMap::new()
+    };
 
     let mut lines: Vec<Line> = Vec::with_capacity(screen_height);
 
@@ -1102,11 +1141,7 @@ fn render_pore_grid_from_states(
         display_rows < total_display_height
     };
 
-    let start_grid_row = if is_four_vertical {
-        scroll_offset
-    } else {
-        0
-    };
+    let start_grid_row = if is_four_vertical { scroll_offset } else { 0 };
 
     let mut grid_row = start_grid_row;
     for display_row in 0..display_rows {
@@ -1952,7 +1987,14 @@ mod tests {
         terminal
             .draw(|frame| {
                 let area = frame.area();
-                render_pore_grid_from_states(frame, &theme, &channel_states, Some(&layout), area, 0);
+                render_pore_grid_from_states(
+                    frame,
+                    &theme,
+                    &channel_states,
+                    Some(&layout),
+                    area,
+                    0,
+                );
             })
             .unwrap();
 
@@ -1987,7 +2029,14 @@ mod tests {
         terminal
             .draw(|frame| {
                 let area = frame.area();
-                render_pore_grid_from_states(frame, &theme, &channel_states, Some(&layout), area, 0);
+                render_pore_grid_from_states(
+                    frame,
+                    &theme,
+                    &channel_states,
+                    Some(&layout),
+                    area,
+                    0,
+                );
             })
             .unwrap();
 
@@ -2026,13 +2075,13 @@ mod tests {
     fn test_vertical_layout_coordinate_mapping() {
         assert_eq!(map_to_vertical_layout(0, 0), (0, 0));
         assert_eq!(map_to_vertical_layout(62, 11), (11, 62));
-        
+
         assert_eq!(map_to_vertical_layout(63, 0), (13, 0));
         assert_eq!(map_to_vertical_layout(125, 11), (24, 62));
-        
+
         assert_eq!(map_to_vertical_layout(0, 12), (26, 0));
         assert_eq!(map_to_vertical_layout(62, 24), (38, 62));
-        
+
         assert_eq!(map_to_vertical_layout(63, 12), (40, 0));
         assert_eq!(map_to_vertical_layout(125, 24), (52, 62));
     }

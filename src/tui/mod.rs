@@ -235,8 +235,21 @@ async fn handle_action(
     }
     match action {
         Action::Quit => app.quit(),
-        Action::Up => app.select_previous(),
-        Action::Down => app.select_next(),
+        Action::Up => {
+            if app.should_scroll_channel_map() {
+                app.channel_map_scroll_offset = app.channel_map_scroll_offset.saturating_sub(1);
+            } else {
+                app.select_previous();
+            }
+        }
+        Action::Down => {
+            if app.should_scroll_channel_map() {
+                app.channel_map_scroll_offset = app.channel_map_scroll_offset.saturating_add(1);
+                app.clamp_channel_map_scroll(53, 20);
+            } else {
+                app.select_next();
+            }
+        }
         Action::Enter => app.enter_detail(),
         Action::Back => app.back(),
         Action::Help => app.toggle_help(),

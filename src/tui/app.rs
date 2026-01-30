@@ -533,6 +533,12 @@ impl App {
         let max_offset = total_rows.saturating_sub(visible_rows);
         self.channel_map_scroll_offset = self.channel_map_scroll_offset.min(max_offset);
     }
+
+    /// Returns true if channel map scrolling should be active
+    pub fn should_scroll_channel_map(&self) -> bool {
+        matches!(self.screen, Screen::PositionDetail { .. })
+            && self.detail_chart == DetailChart::PoreActivity
+    }
 }
 
 #[cfg(test)]
@@ -865,5 +871,73 @@ mod tests {
         app.channel_map_scroll_offset = 5;
         app.clamp_channel_map_scroll(20, 20); // total=visible, max_offset=0
         assert_eq!(app.channel_map_scroll_offset, 0);
+    }
+
+    #[test]
+    fn test_should_scroll_channel_map_in_pore_activity() {
+        let mut app = App::new(test_config());
+        app.positions = vec![test_position("A")];
+        app.run_states.insert("A".to_string(), RunState::Running);
+        app.screen = Screen::PositionDetail { position_idx: 0 };
+        app.detail_chart = DetailChart::PoreActivity;
+        assert!(app.should_scroll_channel_map());
+    }
+
+    #[test]
+    fn test_should_not_scroll_channel_map_in_yield() {
+        let mut app = App::new(test_config());
+        app.positions = vec![test_position("A")];
+        app.run_states.insert("A".to_string(), RunState::Running);
+        app.screen = Screen::PositionDetail { position_idx: 0 };
+        app.detail_chart = DetailChart::Yield;
+        assert!(!app.should_scroll_channel_map());
+    }
+
+    #[test]
+    fn test_should_not_scroll_channel_map_in_overview() {
+        let mut app = App::new(test_config());
+        app.detail_chart = DetailChart::PoreActivity;
+        app.screen = Screen::Overview;
+        assert!(!app.should_scroll_channel_map());
+    }
+
+    #[test]
+    fn test_scroll_down_increments_offset() {
+        let mut app = App::new(test_config());
+        app.channel_map_scroll_offset = 0;
+        let total_rows: usize = 53;
+        let visible_rows: usize = 20;
+        let old_offset = app.channel_map_scroll_offset;
+        app.channel_map_scroll_offset =
+            (old_offset + 1).min(total_rows.saturating_sub(visible_rows));
+        assert_eq!(app.channel_map_scroll_offset, 1);
+    }
+
+    #[test]
+    fn test_scroll_down_does_not_exceed_max() {
+        let mut app = App::new(test_config());
+        app.channel_map_scroll_offset = 33; // max = 53-20 = 33
+        let total_rows: usize = 53;
+        let visible_rows: usize = 20;
+        let old_offset = app.channel_map_scroll_offset;
+        app.channel_map_scroll_offset =
+            (old_offset + 1).min(total_rows.saturating_sub(visible_rows));
+        assert_eq!(app.channel_map_scroll_offset, 33); // unchanged
+    }
+
+    #[test]
+    fn test_scroll_up_decrements_offset() {
+        let mut app = App::new(test_config());
+        app.channel_map_scroll_offset = 5;
+        app.channel_map_scroll_offset = app.channel_map_scroll_offset.saturating_sub(1);
+        assert_eq!(app.channel_map_scroll_offset, 4);
+    }
+
+    #[test]
+    fn test_scroll_up_does_not_go_below_zero() {
+        let mut app = App::new(test_config());
+        app.channel_map_scroll_offset = 0;
+        app.channel_map_scroll_offset = app.channel_map_scroll_offset.saturating_sub(1);
+        assert_eq!(app.channel_map_scroll_offset, 0); // unchanged
     }
 }
