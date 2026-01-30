@@ -975,7 +975,7 @@ fn render_pore_grid_from_states(
     };
 
     let cell_char_width = grid_structure.as_ref().map(|gs| gs.cell_width).unwrap_or(2);
-    
+
     let horizontal_gaps: Vec<usize> = grid_structure
         .as_ref()
         .map(|gs| {
@@ -1106,10 +1106,7 @@ fn render_pore_grid_from_states(
         }
 
         if is_truncated_horizontally {
-            spans.push(Span::styled(
-                "[...]",
-                Style::default().fg(t.warning),
-            ));
+            spans.push(Span::styled("[...]", Style::default().fg(t.warning)));
         }
 
         lines.push(Line::from(spans));
@@ -1588,8 +1585,8 @@ fn calculate_cell_dimensions(
         BlockArrangement::FourQuadrant => 1, // Vertical gap between left/right quadrants
     };
     let gap_rows = match block_arrangement {
-        BlockArrangement::TwoVertical => 1,     // Horizontal gap between top/bottom blocks
-        BlockArrangement::FourQuadrant => 1,    // Horizontal gap between top/bottom quadrants
+        BlockArrangement::TwoVertical => 1, // Horizontal gap between top/bottom blocks
+        BlockArrangement::FourQuadrant => 1, // Horizontal gap between top/bottom quadrants
     };
 
     // Try 2-character cells first
@@ -1749,21 +1746,24 @@ mod tests {
     #[test]
     fn test_cell_dimensions_minion_80_wide() {
         // 32×16 grid in 80-char terminal
-        let (cell_width, _) = calculate_cell_dimensions(32, 16, 80, 24, &BlockArrangement::TwoVertical);
+        let (cell_width, _) =
+            calculate_cell_dimensions(32, 16, 80, 24, &BlockArrangement::TwoVertical);
         assert_eq!(cell_width, 2); // 32*2=64 fits in 80
     }
 
     #[test]
     fn test_cell_dimensions_promethion_80_wide() {
         // 126×25 grid in 80-char terminal
-        let (cell_width, _) = calculate_cell_dimensions(126, 25, 80, 30, &BlockArrangement::FourQuadrant);
+        let (cell_width, _) =
+            calculate_cell_dimensions(126, 25, 80, 30, &BlockArrangement::FourQuadrant);
         assert_eq!(cell_width, 1); // 126*2=252 doesn't fit, use 1-char
     }
 
     #[test]
     fn test_cell_dimensions_promethion_260_wide() {
         // 126×25 grid in 260-char terminal
-        let (cell_width, _) = calculate_cell_dimensions(126, 25, 260, 30, &BlockArrangement::FourQuadrant);
+        let (cell_width, _) =
+            calculate_cell_dimensions(126, 25, 260, 30, &BlockArrangement::FourQuadrant);
         assert_eq!(cell_width, 2); // 126*2=252 fits in 260
     }
 
@@ -1807,7 +1807,10 @@ mod tests {
         assert_eq!(result.flow_cell_type, FlowCellType::MinION);
         assert_eq!(result.block_arrangement, BlockArrangement::TwoVertical);
         assert_eq!(result.gap_positions.len(), 1);
-        assert_eq!(result.gap_positions[0], GapPosition::Horizontal { after_row: 7 });
+        assert_eq!(
+            result.gap_positions[0],
+            GapPosition::Horizontal { after_row: 7 }
+        );
     }
 
     #[test]
@@ -1818,8 +1821,12 @@ mod tests {
         assert_eq!(result.block_arrangement, BlockArrangement::FourQuadrant);
         assert_eq!(result.gap_positions.len(), 2);
         // Gaps can be in any order
-        assert!(result.gap_positions.contains(&GapPosition::Vertical { after_col: 62 }));
-        assert!(result.gap_positions.contains(&GapPosition::Horizontal { after_row: 11 }));
+        assert!(result
+            .gap_positions
+            .contains(&GapPosition::Vertical { after_col: 62 }));
+        assert!(result
+            .gap_positions
+            .contains(&GapPosition::Horizontal { after_row: 11 }));
     }
 
     #[test]
@@ -1860,19 +1867,16 @@ mod tests {
         terminal
             .draw(|frame| {
                 let area = frame.area();
-                render_pore_grid_from_states(
-                    frame,
-                    &theme,
-                    &channel_states,
-                    Some(&layout),
-                    area,
-                );
+                render_pore_grid_from_states(frame, &theme, &channel_states, Some(&layout), area);
             })
             .unwrap();
 
         // If we get here without panicking, the test passes
         // The grid should be rendered with truncation
-        assert!(terminal.backend().buffer().content.len() > 0, "Buffer should contain rendered content");
+        assert!(
+            terminal.backend().buffer().content.len() > 0,
+            "Buffer should contain rendered content"
+        );
     }
 
     #[test]
@@ -1898,18 +1902,15 @@ mod tests {
         terminal
             .draw(|frame| {
                 let area = frame.area();
-                render_pore_grid_from_states(
-                    frame,
-                    &theme,
-                    &channel_states,
-                    Some(&layout),
-                    area,
-                );
+                render_pore_grid_from_states(frame, &theme, &channel_states, Some(&layout), area);
             })
             .unwrap();
 
         // If we get here without panicking, the test passes
         // The message should be displayed instead of grid
-        assert!(terminal.backend().buffer().content.len() > 0, "Buffer should contain rendered content");
+        assert!(
+            terminal.backend().buffer().content.len() > 0,
+            "Buffer should contain rendered content"
+        );
     }
 }

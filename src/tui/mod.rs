@@ -349,10 +349,13 @@ async fn refresh_data(app: &mut App, client: &mut Client) {
                                         if let Some(stats) = app.stats_cache.get_mut(&pos.name) {
                                             let recent = &points[points.len() - 1];
                                             let prev = &points[points.len() - 2];
-                                            let time_delta = (recent.seconds - prev.seconds).max(1) as f64;
-                                            let bases_delta = recent.bases.saturating_sub(prev.bases) as f64;
+                                            let time_delta =
+                                                (recent.seconds - prev.seconds).max(1) as f64;
+                                            let bases_delta =
+                                                recent.bases.saturating_sub(prev.bases) as f64;
                                             stats.throughput_bps = bases_delta / time_delta;
-                                            stats.throughput_gbph = stats.throughput_bps * 3600.0 / 1_000_000_000.0;
+                                            stats.throughput_gbph =
+                                                stats.throughput_bps * 3600.0 / 1_000_000_000.0;
                                             tracing::debug!(position = %pos.name, throughput_gbph = stats.throughput_gbph, "Calculated throughput for overview");
                                         }
                                     }
