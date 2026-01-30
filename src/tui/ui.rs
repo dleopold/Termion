@@ -951,28 +951,55 @@ fn render_pore_grid_from_states(
 
     let total_channels = channel_states.states.len();
 
-    let (grid_width, grid_height) = if let Some(layout) = channel_layout {
-        (layout.width as usize, layout.height as usize)
+    let (grid_structure, grid_width, grid_height) = if let Some(layout) = channel_layout {
+        let gs = calculate_grid_structure(layout, screen_width, screen_height);
+        let w = gs.grid_cols;
+        let h = gs.grid_rows;
+        (Some(gs), w, h)
     } else {
         let size = (total_channels as f64).sqrt().ceil() as usize;
-        (size, size)
+        (None, size, size)
     };
 
-    let has_two_blocks = grid_height == 16;
-    let gap_after_row = if has_two_blocks { Some(7usize) } else { None };
-    let total_display_height = if has_two_blocks {
-        grid_height + 1
-    } else {
-        grid_height
-    };
+    let cell_char_width = grid_structure.as_ref().map(|gs| gs.cell_width).unwrap_or(2);
+    
+    let horizontal_gaps: Vec<usize> = grid_structure
+        .as_ref()
+        .map(|gs| {
+            gs.gap_positions
+                .iter()
+                .filter_map(|g| match g {
+                    GapPosition::Horizontal { after_row } => Some(*after_row),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
-    let cell_char_width = 2usize;
-    let scale_x = ((grid_width * cell_char_width) as f64 / screen_width as f64).max(1.0);
+    let vertical_gaps: Vec<usize> = grid_structure
+        .as_ref()
+        .map(|gs| {
+            gs.gap_positions
+                .iter()
+                .filter_map(|g| match g {
+                    GapPosition::Vertical { after_col } => Some(*after_col),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let num_horizontal_gaps = horizontal_gaps.len();
+    let num_vertical_gaps = vertical_gaps.len();
+    let total_display_height = grid_height + num_horizontal_gaps;
+    let total_display_width = grid_width + num_vertical_gaps;
+
+    let scale_x = ((total_display_width * cell_char_width) as f64 / screen_width as f64).max(1.0);
     let scale_y = (total_display_height as f64 / screen_height as f64).max(1.0);
     let scale = scale_x.max(scale_y);
 
     let display_cols =
-        ((grid_width as f64 / scale).ceil() as usize).min(screen_width / cell_char_width);
+        ((total_display_width as f64 / scale).ceil() as usize).min(screen_width / cell_char_width);
     let display_rows = ((total_display_height as f64 / scale).ceil() as usize).min(screen_height);
 
     let grid_pixel_width = display_cols * cell_char_width;
@@ -1000,19 +1027,41 @@ fn render_pore_grid_from_states(
 
     let mut grid_row = 0usize;
     for display_row in 0..display_rows {
-        if let Some(gap_row) = gap_after_row {
-            let gap_display_row = ((gap_row + 1) as f64 / scale).floor() as usize;
+        let mut is_gap_row = false;
+        for &gap_after_row in &horizontal_gaps {
+            let gap_display_row = ((gap_after_row + 1) as f64 / scale).floor() as usize;
             if display_row == gap_display_row && scale <= 1.5 {
-                lines.push(Line::from(""));
-                continue;
+                is_gap_row = true;
+                break;
             }
+        }
+
+        if is_gap_row {
+            lines.push(Line::from(""));
+            continue;
         }
 
         let padding = " ".repeat(offset_x);
         let mut spans: Vec<Span> = vec![Span::raw(padding)];
 
+        let mut grid_col = 0usize;
         for display_col in 0..display_cols {
-            let grid_x = (display_col as f64 * scale).floor() as u32;
+            let mut is_gap_col = false;
+            for &gap_after_col in &vertical_gaps {
+                let gap_display_col = ((gap_after_col + 1) as f64 / scale).floor() as usize;
+                if display_col == gap_display_col && scale <= 1.5 {
+                    is_gap_col = true;
+                    break;
+                }
+            }
+
+            if is_gap_col {
+                let gap_symbol = " ".repeat(cell_char_width);
+                spans.push(Span::raw(gap_symbol));
+                continue;
+            }
+
+            let grid_x = grid_col as u32;
             let grid_y = grid_row as u32;
 
             let channel_idx = if channel_layout.is_some() {
@@ -1030,9 +1079,14 @@ fn render_pore_grid_from_states(
                 Some(idx) if idx < channel_states.states.len() => {
                     state_to_symbol(t, &channel_states.states[idx])
                 }
-                _ => ("  ", t.channel_empty),
+                _ => {
+                    let empty_symbol = if cell_char_width == 2 { "  " } else { " " };
+                    (empty_symbol, t.channel_empty)
+                }
             };
             spans.push(Span::styled(symbol, Style::default().fg(color)));
+
+            grid_col += 1;
         }
         lines.push(Line::from(spans));
         grid_row = (grid_row + 1).min(grid_height.saturating_sub(1));
