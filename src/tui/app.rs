@@ -115,6 +115,7 @@ pub struct App {
     pub flow_cell_info: HashMap<String, FlowCellInfo>,
     /// Tracks when throughput was last calculated for each position (for throttling).
     pub throughput_last_calc: HashMap<String, Instant>,
+    pub channel_map_scroll_offset: usize,
 }
 
 pub struct ChartBuffer {
@@ -170,6 +171,7 @@ impl App {
             run_info: HashMap::new(),
             flow_cell_info: HashMap::new(),
             throughput_last_calc: HashMap::new(),
+            channel_map_scroll_offset: 0,
         }
     }
 
@@ -190,6 +192,7 @@ impl App {
     pub fn select_next(&mut self) {
         if !self.positions.is_empty() {
             self.selected_position = (self.selected_position + 1) % self.positions.len();
+            self.reset_channel_map_scroll();
         }
     }
 
@@ -199,6 +202,7 @@ impl App {
                 .selected_position
                 .checked_sub(1)
                 .unwrap_or(self.positions.len() - 1);
+            self.reset_channel_map_scroll();
         }
     }
 
@@ -350,10 +354,16 @@ impl App {
             DetailChart::ReadLength => DetailChart::PoreActivity,
             DetailChart::PoreActivity => DetailChart::Yield,
         };
+        if self.detail_chart != DetailChart::PoreActivity {
+            self.reset_channel_map_scroll();
+        }
     }
 
     pub fn set_detail_chart(&mut self, chart: DetailChart) {
         self.detail_chart = chart;
+        if chart != DetailChart::PoreActivity {
+            self.reset_channel_map_scroll();
+        }
     }
 
     pub fn toggle_yield_unit(&mut self) {
@@ -511,6 +521,17 @@ impl App {
     pub fn mark_throughput_calculated(&mut self, position: &str) {
         self.throughput_last_calc
             .insert(position.to_string(), Instant::now());
+    }
+
+    /// Resets the channel map scroll offset to the top
+    pub fn reset_channel_map_scroll(&mut self) {
+        self.channel_map_scroll_offset = 0;
+    }
+
+    /// Clamps the channel map scroll offset to valid range
+    pub fn clamp_channel_map_scroll(&mut self, total_rows: usize, visible_rows: usize) {
+        let max_offset = total_rows.saturating_sub(visible_rows);
+        self.channel_map_scroll_offset = self.channel_map_scroll_offset.min(max_offset);
     }
 }
 
@@ -814,5 +835,35 @@ mod tests {
         app.update_duty_time("X1", duty_time);
         assert!(app.duty_time.contains_key("X1"));
         assert_eq!(app.duty_time.get("X1").unwrap().pore_occupancy.len(), 3);
+    }
+
+    #[test]
+    fn test_scroll_offset_initializes_to_zero() {
+        let app = App::new(test_config());
+        assert_eq!(app.channel_map_scroll_offset, 0);
+    }
+
+    #[test]
+    fn test_scroll_offset_clamps_to_bounds() {
+        let mut app = App::new(test_config());
+        app.channel_map_scroll_offset = 100;
+        app.clamp_channel_map_scroll(28, 20); // total=28, visible=20
+        assert_eq!(app.channel_map_scroll_offset, 8); // max = 28-20
+    }
+
+    #[test]
+    fn test_scroll_reset() {
+        let mut app = App::new(test_config());
+        app.channel_map_scroll_offset = 10;
+        app.reset_channel_map_scroll();
+        assert_eq!(app.channel_map_scroll_offset, 0);
+    }
+
+    #[test]
+    fn test_scroll_clamp_handles_zero() {
+        let mut app = App::new(test_config());
+        app.channel_map_scroll_offset = 5;
+        app.clamp_channel_map_scroll(20, 20); // total=visible, max_offset=0
+        assert_eq!(app.channel_map_scroll_offset, 0);
     }
 }
