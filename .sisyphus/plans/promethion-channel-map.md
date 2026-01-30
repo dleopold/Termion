@@ -249,7 +249,7 @@ Critical Path: Task 1 → Tasks 2,3 (parallel) → Task 4 → Task 5 → Task 7
 
 ---
 
-- [ ] 2. Implement calculate_grid_structure() with TDD
+- [x] 2. Implement calculate_grid_structure() with TDD
 
   **What to do**:
   - Create test helper functions (for use in tests only):
@@ -362,7 +362,7 @@ Critical Path: Task 1 → Tasks 2,3 (parallel) → Task 4 → Task 5 → Task 7
 
 ---
 
-- [ ] 3. Implement dynamic cell sizing logic
+- [x] 3. Implement dynamic cell sizing logic
 
   **What to do**:
   - **Integration note:** This task extracts cell sizing as a reusable helper function. Task 2 may implement similar logic inline; this provides a clean abstraction for Task 4's render loop to use.
