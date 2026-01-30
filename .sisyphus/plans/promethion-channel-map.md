@@ -410,7 +410,7 @@ Critical Path: Task 1 → Tasks 2,3 (parallel) → Task 4 → Task 5 → Task 7
 
 ---
 
-- [ ] 4. Refactor render_pore_grid_from_states() to use new layout system
+- [x] 4. Refactor render_pore_grid_from_states() to use new layout system
 
   **What to do**:
   - Replace hardcoded `has_two_blocks = grid_height == 16` logic
