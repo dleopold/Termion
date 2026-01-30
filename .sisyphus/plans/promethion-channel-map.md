@@ -63,13 +63,13 @@ Enable the channel map widget to correctly display both MinION (512 channels, 2 
 - Updated SPEC_TUI.md section 2a with PromethION documentation
 
 ### Definition of Done
-- [ ] `cargo test` passes (all 74+ tests including new ones)
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
-- [ ] MinION channel map displays identically to current behavior (regression guard)
-- [ ] PromethION channel map displays as 4 quadrants with gaps
-- [ ] Dynamic sizing fills available space appropriately
-- [ ] Partial display indicator shows when terminal too small
+- [x] `cargo test` passes (all 74+ tests including new ones)
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes
+- [x] MinION channel map displays identically to current behavior (regression guard)
+- [x] PromethION channel map displays as 4 quadrants with gaps
+- [x] Dynamic sizing fills available space appropriately
+- [x] Partial display indicator shows when terminal too small
 
 ### Must Have
 - MinION layout unchanged (2 blocks, gap after row 7)
@@ -676,11 +676,11 @@ cargo build --release
 ```
 
 ### Final Checklist
-- [ ] All "Must Have" features implemented
-- [ ] All "Must NOT Have" guardrails respected
-- [ ] All 74+ tests pass (including new layout tests)
-- [ ] MinION rendering unchanged (regression guard)
-- [ ] PromethION 4-quadrant layout displays correctly
-- [ ] Dynamic sizing fills available space
-- [ ] Small terminal graceful degradation works
-- [ ] SPEC_TUI.md updated with PromethION documentation
+- [x] All "Must Have" features implemented
+- [x] All "Must NOT Have" guardrails respected
+- [x] All 74+ tests pass (including new layout tests)
+- [x] MinION rendering unchanged (regression guard)
+- [x] PromethION 4-quadrant layout displays correctly
+- [x] Dynamic sizing fills available space
+- [x] Small terminal graceful degradation works
+- [x] SPEC_TUI.md updated with PromethION documentation
