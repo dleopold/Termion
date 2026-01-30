@@ -18,6 +18,73 @@ use ratatui::{
     Frame,
 };
 
+/// Represents the type of flow cell (device) based on channel count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum FlowCellType {
+    #[default]
+    MinION,
+    PromethION,
+}
+
+impl FlowCellType {
+    /// Infers the flow cell type from the channel count.
+    ///
+    /// # Arguments
+    ///
+    /// * `count` - Total number of channels
+    ///
+    /// # Returns
+    ///
+    /// - `MinION` if count <= 512 (includes Flongle with 126 channels)
+    /// - `PromethION` if count > 512
+    #[allow(dead_code)]
+    pub fn from_channel_count(count: usize) -> Self {
+        if count > 512 {
+            FlowCellType::PromethION
+        } else {
+            FlowCellType::MinION
+        }
+    }
+}
+
+/// Describes how channels are arranged in blocks within a flow cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(dead_code)]
+pub enum BlockArrangement {
+    /// MinION: 2 blocks stacked vertically
+    TwoVertical,
+    /// PromethION: 2×2 grid of quadrants
+    FourQuadrant,
+}
+
+/// Specifies the position of a gap in the channel grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(dead_code)]
+pub enum GapPosition {
+    /// Gap after specified row (horizontal gap)
+    Horizontal { after_row: usize },
+    /// Gap after specified column (vertical gap)
+    Vertical { after_col: usize },
+}
+
+/// Describes the grid structure for rendering a channel map.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+pub struct GridStructure {
+    /// Type of flow cell (MinION or PromethION)
+    pub flow_cell_type: FlowCellType,
+    /// Normalized column count for the grid
+    pub grid_cols: usize,
+    /// Normalized row count for the grid
+    pub grid_rows: usize,
+    /// How channels are arranged in blocks
+    pub block_arrangement: BlockArrangement,
+    /// Positions of gaps in the grid
+    pub gap_positions: Vec<GapPosition>,
+    /// Width of each cell in characters (1 or 2)
+    pub cell_width: usize,
+}
+
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
     let t = &app.theme;
@@ -1401,5 +1468,84 @@ fn format_throughput_gbph(gbph: f64) -> String {
         format!("{:.2} Mb/h", gbph * 1_000.0)
     } else {
         format!("{:.2} Kb/h", gbph * 1_000_000.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_flow_cell_type_from_channel_count_minion_512() {
+        assert_eq!(FlowCellType::from_channel_count(512), FlowCellType::MinION);
+    }
+
+    #[test]
+    fn test_flow_cell_type_from_channel_count_promethion_3000() {
+        assert_eq!(
+            FlowCellType::from_channel_count(3000),
+            FlowCellType::PromethION
+        );
+    }
+
+    #[test]
+    fn test_flow_cell_type_from_channel_count_flongle_126() {
+        assert_eq!(FlowCellType::from_channel_count(126), FlowCellType::MinION);
+    }
+
+    #[test]
+    fn test_flow_cell_type_from_channel_count_zero() {
+        assert_eq!(FlowCellType::from_channel_count(0), FlowCellType::MinION);
+    }
+
+    #[test]
+    fn test_flow_cell_type_from_channel_count_boundary_513() {
+        assert_eq!(
+            FlowCellType::from_channel_count(513),
+            FlowCellType::PromethION
+        );
+    }
+
+    #[test]
+    fn test_flow_cell_type_default() {
+        assert_eq!(FlowCellType::default(), FlowCellType::MinION);
+    }
+
+    #[test]
+    fn test_block_arrangement_variants() {
+        let two_vert = BlockArrangement::TwoVertical;
+        let four_quad = BlockArrangement::FourQuadrant;
+        assert_ne!(two_vert, four_quad);
+    }
+
+    #[test]
+    fn test_gap_position_horizontal() {
+        let gap = GapPosition::Horizontal { after_row: 7 };
+        assert_eq!(gap, GapPosition::Horizontal { after_row: 7 });
+    }
+
+    #[test]
+    fn test_gap_position_vertical() {
+        let gap = GapPosition::Vertical { after_col: 15 };
+        assert_eq!(gap, GapPosition::Vertical { after_col: 15 });
+    }
+
+    #[test]
+    fn test_grid_structure_creation() {
+        let grid = GridStructure {
+            flow_cell_type: FlowCellType::MinION,
+            grid_cols: 32,
+            grid_rows: 16,
+            block_arrangement: BlockArrangement::TwoVertical,
+            gap_positions: vec![GapPosition::Horizontal { after_row: 7 }],
+            cell_width: 2,
+        };
+
+        assert_eq!(grid.flow_cell_type, FlowCellType::MinION);
+        assert_eq!(grid.grid_cols, 32);
+        assert_eq!(grid.grid_rows, 16);
+        assert_eq!(grid.block_arrangement, BlockArrangement::TwoVertical);
+        assert_eq!(grid.gap_positions.len(), 1);
+        assert_eq!(grid.cell_width, 2);
     }
 }
