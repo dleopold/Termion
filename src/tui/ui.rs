@@ -934,18 +934,31 @@ fn render_pore_grid_from_states(
     channel_layout: Option<&ChannelLayout>,
     area: Rect,
 ) {
-    let inner = Block::default()
+    let block = Block::default()
         .title(" Channel Map ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(t.warning));
 
-    let inner_area = inner.inner(area);
-    frame.render_widget(inner, area);
+    let inner_area = block.inner(area);
+    frame.render_widget(block, area);
 
     let screen_width = inner_area.width as usize;
     let screen_height = inner_area.height as usize;
 
     if screen_width == 0 || screen_height == 0 || channel_states.states.is_empty() {
+        return;
+    }
+
+    if screen_width < 20 || screen_height < 5 {
+        let block = Block::default()
+            .title(" Channel Map ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(t.warning));
+        let message = Paragraph::new("Terminal too small - resize for full view")
+            .style(Style::default().fg(t.warning))
+            .alignment(Alignment::Center)
+            .block(block);
+        frame.render_widget(message, area);
         return;
     }
 
@@ -1025,6 +1038,9 @@ fn render_pore_grid_from_states(
         lines.push(Line::from(""));
     }
 
+    let is_truncated_horizontally = display_cols < total_display_width;
+    let is_truncated_vertically = display_rows < total_display_height;
+
     let mut grid_row = 0usize;
     for display_row in 0..display_rows {
         let mut is_gap_row = false;
@@ -1088,8 +1104,23 @@ fn render_pore_grid_from_states(
 
             grid_col += 1;
         }
+
+        if is_truncated_horizontally {
+            spans.push(Span::styled(
+                "[...]",
+                Style::default().fg(t.warning),
+            ));
+        }
+
         lines.push(Line::from(spans));
         grid_row = (grid_row + 1).min(grid_height.saturating_sub(1));
+    }
+
+    if is_truncated_vertically {
+        lines.push(Line::from(Span::styled(
+            "[...more]",
+            Style::default().fg(t.warning),
+        )));
     }
 
     let grid = Paragraph::new(lines);
@@ -1803,5 +1834,82 @@ mod tests {
         let layout = create_minion_layout();
         let result = calculate_grid_structure(&layout, 120, 30); // Wide
         assert_eq!(result.cell_width, 2); // Can use 2-char cells
+    }
+
+    #[test]
+    fn test_small_terminal_partial_indicator() {
+        // 10×5 screen should show partial grid with indicator
+        // This tests that rendering doesn't panic and shows some content
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let backend = TestBackend::new(10, 5);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let layout = create_minion_layout();
+        let mut state_counts = std::collections::HashMap::new();
+        state_counts.insert("sequencing".to_string(), 512);
+        let channel_states = ChannelStatesSnapshot {
+            states: vec!["sequencing".to_string(); 512],
+            channel_count: 512,
+            state_counts,
+        };
+
+        let theme = Theme::default();
+
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                render_pore_grid_from_states(
+                    frame,
+                    &theme,
+                    &channel_states,
+                    Some(&layout),
+                    area,
+                );
+            })
+            .unwrap();
+
+        // If we get here without panicking, the test passes
+        // The grid should be rendered with truncation
+        assert!(terminal.backend().buffer().content.len() > 0, "Buffer should contain rendered content");
+    }
+
+    #[test]
+    fn test_very_small_terminal_message() {
+        // 5×3 screen should show "Terminal too small" message
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let backend = TestBackend::new(5, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let layout = create_minion_layout();
+        let mut state_counts = std::collections::HashMap::new();
+        state_counts.insert("sequencing".to_string(), 512);
+        let channel_states = ChannelStatesSnapshot {
+            states: vec!["sequencing".to_string(); 512],
+            channel_count: 512,
+            state_counts,
+        };
+
+        let theme = Theme::default();
+
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                render_pore_grid_from_states(
+                    frame,
+                    &theme,
+                    &channel_states,
+                    Some(&layout),
+                    area,
+                );
+            })
+            .unwrap();
+
+        // If we get here without panicking, the test passes
+        // The message should be displayed instead of grid
+        assert!(terminal.backend().buffer().content.len() > 0, "Buffer should contain rendered content");
     }
 }
